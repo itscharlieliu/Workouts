@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Start Workout</h1>
+<div class="grid two">
+  <section class="card">
+    <h2>Start blank workout</h2>
+    <form method="post" class="stack">
+      <label>Name<input name="name" placeholder="Optional workout name"></label>
+      <button type="submit">Start blank</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Start from template</h2>
+    {% for t in templates %}
+      <form method="post" class="inline-form">
+        <input type="hidden" name="template_id" value="{{ t['id'] }}">
+        <input type="hidden" name="name" value="{{ t['name'] }}">
+        <strong>{{ t['name'] }}</strong>
+        <button type="submit">Start</button>
+      </form>
+    {% else %}
+      <p>No templates yet.</p>
+    {% endfor %}
+  </section>
+</div>
+<section class="card">
+  <h2>Recent</h2>
+  <ul>{% for w in recent %}<li>{{ w['started_at'] }} — {{ w['name'] }}</li>{% else %}<li>No recent workouts.</li>{% endfor %}</ul>
+</section>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}Setup · Workout Tracker{% endblock %}
+{% block content %}
+<div class="card narrow">
+  <h1>First-time setup</h1>
+  <p>Create your local account.</p>
+  <form method="post" class="stack">
+    <label>Username<input name="username" required></label>
+    <label>Email<input name="email" type="email"></label>
+    <label>Password<input name="password" type="password" required></label>
+    <button type="submit">Create account</button>
+  </form>
+</div>
+{% endblock %}

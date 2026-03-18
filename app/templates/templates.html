@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Templates</h1>
+<div class="grid two">
+  <section class="card">
+    <h2>Create Template</h2>
+    <form method="post" class="stack">
+      <label>Name<input name="name" required></label>
+      <label>Notes<textarea name="notes"></textarea></label>
+      <div class="grid two compact">
+        <label>Target sets<input name="target_sets" type="number" value="3"></label>
+        <label>Target reps<input name="target_reps" type="number" value="10"></label>
+        <label>Rest seconds<input name="rest_seconds" type="number" value="90"></label>
+      </div>
+      <fieldset>
+        <legend>Exercises</legend>
+        <div class="checkbox-list">
+        {% for ex in exercise_options %}
+          <label><input type="checkbox" name="exercise_ids" value="{{ ex['id'] }}"> {{ ex['name'] }}</label>
+        {% endfor %}
+        </div>
+      </fieldset>
+      <button type="submit">Create template</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Saved Templates</h2>
+    <ul>
+      {% for t in templates %}
+        <li>{{ t['name'] }}{% if t['notes'] %} — {{ t['notes'] }}{% endif %}</li>
+      {% else %}
+        <li>No templates yet.</li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

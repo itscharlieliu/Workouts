@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Workout Tracker{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><a href="{{ url_for('dashboard') if current_user else url_for('login') }}">Workout Tracker</a></div>
+    {% if current_user %}
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('workouts_new') }}">Start Workout</a>
+      <a href="{{ url_for('history') }}">History</a>
+      <a href="{{ url_for('templates') }}">Templates</a>
+      <a href="{{ url_for('exercises') }}">Exercises</a>
+      <a href="{{ url_for('import_csv_view') }}">Import</a>
+      <a href="{{ url_for('export_csv') }}">Export CSV</a>
+    </nav>
+    <form method="post" action="{{ url_for('logout') }}"><button type="submit" class="ghost">Logout</button></form>
+    {% endif %}
+  </header>
+  {% if active_workout %}
+  <div class="banner">Active workout: <a href="{{ url_for('workout_edit', workout_id=active_workout['id']) }}">{{ active_workout['name'] }}</a></div>
+  {% endif %}
+  <main class="container">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <ul class="flashes">{% for msg in messages %}<li>{{ msg }}</li>{% endfor %}</ul>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

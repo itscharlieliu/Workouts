@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>History</h1>
+<table>
+  <tr><th>Date</th><th>Name</th><th>Status</th><th></th></tr>
+  {% for w in workouts %}
+  <tr>
+    <td>{{ w['started_at'] }}</td>
+    <td>{{ w['name'] }}</td>
+    <td>{{ w['status'] }}</td>
+    <td><a href="{{ url_for('workout_detail', workout_id=w['id']) }}">View</a>{% if w['status']=='in_progress' %} · <a href="{{ url_for('workout_edit', workout_id=w['id']) }}">Resume</a>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4">No workouts yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

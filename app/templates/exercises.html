@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Exercises</h1>
+<div class="grid two">
+  <section class="card">
+    <h2>Add Exercise</h2>
+    <form method="post" class="stack">
+      <label>Name<input name="name" required></label>
+      <label>Category<input name="category"></label>
+      <label>Equipment<input name="equipment"></label>
+      <label>Notes<textarea name="notes"></textarea></label>
+      <button type="submit">Add</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Library</h2>
+    <table>
+      <tr><th>Name</th><th>Category</th><th>Equipment</th></tr>
+      {% for ex in exercises %}
+      <tr><td>{{ ex['name'] }}</td><td>{{ ex['category'] or '' }}</td><td>{{ ex['equipment'] or '' }}</td></tr>
+      {% else %}
+      <tr><td colspan="3">No exercises yet.</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+</div>
+{% endblock %}

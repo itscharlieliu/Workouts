@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Dashboard</h1>
+<div class="grid two">
+  <section class="card">
+    <h2>Start</h2>
+    <p><a class="button" href="{{ url_for('workouts_new') }}">Start Workout</a></p>
+    {% if active %}
+      <p>Resume: <a href="{{ url_for('workout_edit', workout_id=active['id']) }}">{{ active['name'] }}</a></p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2>Quick Templates</h2>
+    {% if templates %}
+      <ul>{% for t in templates %}<li>{{ t['name'] }}</li>{% endfor %}</ul>
+    {% else %}<p>No templates yet.</p>{% endif %}
+  </section>
+</div>
+<section class="card">
+  <h2>Recent Workouts</h2>
+  {% if recent %}
+  <table>
+    <tr><th>Date</th><th>Name</th><th>Status</th></tr>
+    {% for w in recent %}
+      <tr><td>{{ w['started_at'] }}</td><td><a href="{{ url_for('workout_detail', workout_id=w['id']) }}">{{ w['name'] }}</a></td><td>{{ w['status'] }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+    <p>No workouts yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

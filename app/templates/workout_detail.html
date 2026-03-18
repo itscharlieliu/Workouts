@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>{{ workout['name'] }}</h1>
+<p>{{ workout['started_at'] }}{% if workout['ended_at'] %} → {{ workout['ended_at'] }}{% endif %}</p>
+{% if workout['notes'] %}<p>{{ workout['notes'] }}</p>{% endif %}
+{% for block in workout_exercises %}
+<section class="card exercise-card">
+  <h2>{{ block.exercise['exercise_name_snapshot'] }}</h2>
+  <table>
+    <tr><th>#</th><th>Type</th><th>Weight</th><th>Reps</th><th>RPE</th></tr>
+    {% for s in block.sets %}
+      <tr><td>{{ s['set_number'] }}</td><td>{{ s['set_type'] }}</td><td>{{ s['weight'] or '' }}</td><td>{{ s['reps'] or '' }}</td><td>{{ s['rpe'] or '' }}</td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endfor %}
+{% endblock %}

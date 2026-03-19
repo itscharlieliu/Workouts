@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS exercises (
     name TEXT NOT NULL,
     category TEXT,
     equipment TEXT,
+    tracking_mode TEXT NOT NULL DEFAULT 'strength',
     notes TEXT,
     is_archived INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -122,6 +123,8 @@ CREATE TABLE IF NOT EXISTS sets (
     weight REAL,
     reps INTEGER,
     duration_seconds INTEGER,
+    distance_miles REAL,
+    calories INTEGER,
     rpe REAL,
     is_completed INTEGER NOT NULL DEFAULT 1,
     notes TEXT,
@@ -154,6 +157,15 @@ def init_db():
     db = sqlite3.connect(DB_PATH)
     try:
         db.executescript(SCHEMA)
+        # lightweight migrations
+        cols = {row[1] for row in db.execute("PRAGMA table_info(exercises)")}
+        if 'tracking_mode' not in cols:
+            db.execute("ALTER TABLE exercises ADD COLUMN tracking_mode TEXT NOT NULL DEFAULT 'strength'")
+        set_cols = {row[1] for row in db.execute("PRAGMA table_info(sets)")}
+        if 'distance_miles' not in set_cols:
+            db.execute("ALTER TABLE sets ADD COLUMN distance_miles REAL")
+        if 'calories' not in set_cols:
+            db.execute("ALTER TABLE sets ADD COLUMN calories INTEGER")
         db.commit()
     finally:
         db.close()
@@ -238,7 +250,8 @@ def get_workout_exercises(workout_id):
             "SELECT * FROM sets WHERE workout_exercise_id = ? ORDER BY set_number, id",
             (ex["id"],),
         )
-        enriched.append({"exercise": ex, "sets": sets, "last": get_last_performance(ex["exercise_id"], workout_id) if ex["exercise_id"] else None})
+        ex_meta = query_one("SELECT * FROM exercises WHERE id = ?", (ex["exercise_id"],)) if ex["exercise_id"] else None
+        enriched.append({"exercise": ex, "exercise_meta": ex_meta, "sets": sets, "last": get_last_performance(ex["exercise_id"], workout_id) if ex["exercise_id"] else None})
     return enriched
 
 
@@ -247,7 +260,7 @@ def get_last_performance(exercise_id, current_workout_id):
         return None
     row = query_one(
         """
-        SELECT s.weight, s.reps, s.rpe
+        SELECT s.weight, s.reps, s.rpe, s.duration_seconds, s.distance_miles, s.calories
         FROM sets s
         JOIN workout_exercises we ON we.id = s.workout_exercise_id
         JOIN workouts w ON w.id = we.workout_id
@@ -361,8 +374,8 @@ def exercises():
         if name:
             now = now_iso()
             execute(
-                "INSERT INTO exercises (user_id, name, category, equipment, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-                (user["id"], name, request.form.get("category"), request.form.get("equipment"), request.form.get("notes"), now, now),
+                "INSERT INTO exercises (user_id, name, category, equipment, tracking_mode, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (user["id"], name, request.form.get("category"), request.form.get("equipment"), request.form.get("tracking_mode") or 'strength', request.form.get("notes"), now, now),
             )
             flash("Exercise added.")
         return redirect(url_for("exercises"))
@@ -456,13 +469,19 @@ def save_workout_exercise(we_id):
     for sid in set_ids:
         weight = request.form.get(f"weight_{sid}") or None
         reps = request.form.get(f"reps_{sid}") or None
+        duration = request.form.get(f"duration_{sid}") or None
+        distance = request.form.get(f"distance_{sid}") or None
+        calories = request.form.get(f"calories_{sid}") or None
         rpe = request.form.get(f"rpe_{sid}") or None
         stype = request.form.get(f"set_type_{sid}") or "normal"
         completed = 1 if request.form.get(f"done_{sid}") else 0
         execute(
-            "UPDATE sets SET weight=?, reps=?, rpe=?, set_type=?, is_completed=?, logged_at=? WHERE id=? AND workout_exercise_id=?",
+            "UPDATE sets SET weight=?, reps=?, duration_seconds=?, distance_miles=?, calories=?, rpe=?, set_type=?, is_completed=?, logged_at=? WHERE id=? AND workout_exercise_id=?",
             (float(weight) if weight not in (None, "") else None,
              int(reps) if reps not in (None, "") else None,
+             int(duration) if duration not in (None, "") else None,
+             float(distance) if distance not in (None, "") else None,
+             int(calories) if calories not in (None, "") else None,
              float(rpe) if rpe not in (None, "") else None,
              stype,
              completed,
@@ -515,14 +534,31 @@ def workout_detail(workout_id):
     return render_template("workout_detail.html", workout=workout, workout_exercises=get_workout_exercises(workout_id))
 
 
+@app.route("/workouts/<int:workout_id>/delete", methods=["POST"])
+@login_required
+def delete_workout(workout_id):
+    user = current_user()
+    workout = get_workout(workout_id, user["id"])
+    wes = query_all("SELECT id FROM workout_exercises WHERE workout_id = ?", (workout_id,))
+    for we in wes:
+        execute("DELETE FROM sets WHERE workout_exercise_id = ?", (we["id"],))
+    execute("DELETE FROM workout_exercises WHERE workout_id = ?", (workout_id,))
+    execute("DELETE FROM workouts WHERE id = ? AND user_id = ?", (workout_id, user["id"]))
+    flash(f"Deleted workout: {workout['name']}")
+    return redirect(url_for("history"))
+
+
 @app.route("/export/json")
 @login_required
 def export_json():
     user = current_user()
     data = {
         "workouts": [dict(r) for r in query_all("SELECT * FROM workouts WHERE user_id = ? ORDER BY started_at DESC", (user["id"],))],
+        "workout_exercises": [dict(r) for r in query_all("SELECT we.* FROM workout_exercises we JOIN workouts w ON w.id = we.workout_id WHERE w.user_id = ? ORDER BY we.workout_id, we.sort_order", (user["id"],))],
+        "sets": [dict(r) for r in query_all("SELECT s.* FROM sets s JOIN workout_exercises we ON we.id = s.workout_exercise_id JOIN workouts w ON w.id = we.workout_id WHERE w.user_id = ? ORDER BY s.logged_at DESC", (user["id"],))],
         "exercises": [dict(r) for r in query_all("SELECT * FROM exercises WHERE user_id = ?", (user["id"],))],
         "templates": [dict(r) for r in query_all("SELECT * FROM workout_templates WHERE user_id = ?", (user["id"],))],
+        "template_exercises": [dict(r) for r in query_all("SELECT tpe.* FROM workout_template_exercises tpe JOIN workout_templates wt ON wt.id = tpe.template_id WHERE wt.user_id = ? ORDER BY tpe.template_id, tpe.sort_order", (user["id"],))],
     }
     buf = io.BytesIO(json.dumps(data, indent=2).encode())
     return send_file(buf, mimetype="application/json", as_attachment=True, download_name="workout_tracker_export.json")
@@ -534,10 +570,10 @@ def export_csv():
     user = current_user()
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["workout_date", "workout_name", "exercise", "set_number", "weight", "reps", "rpe", "set_type"])
+    writer.writerow(["workout_date", "workout_name", "exercise", "set_number", "weight", "reps", "duration_seconds", "distance_miles", "calories", "rpe", "set_type"])
     rows = query_all(
         """
-        SELECT w.started_at, w.name, we.exercise_name_snapshot, s.set_number, s.weight, s.reps, s.rpe, s.set_type
+        SELECT w.started_at, w.name, we.exercise_name_snapshot, s.set_number, s.weight, s.reps, s.duration_seconds, s.distance_miles, s.calories, s.rpe, s.set_type
         FROM workouts w
         JOIN workout_exercises we ON we.workout_id = w.id
         JOIN sets s ON s.workout_exercise_id = we.id
@@ -547,19 +583,19 @@ def export_csv():
         (user["id"],),
     )
     for r in rows:
-        writer.writerow([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]])
+        writer.writerow([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10]])
     buf = io.BytesIO(out.getvalue().encode())
     return send_file(buf, mimetype="text/csv", as_attachment=True, download_name="workout_tracker_export.csv")
 
 
-def ensure_exercise(user_id, ex_name):
+def ensure_exercise(user_id, ex_name, tracking_mode='strength'):
     ex = query_one("SELECT * FROM exercises WHERE user_id = ? AND lower(name)=lower(?)", (user_id, ex_name))
     if ex:
         return ex["id"]
     now = now_iso()
     cur = execute(
-        "INSERT INTO exercises (user_id, name, created_at, updated_at) VALUES (?,?,?,?)",
-        (user_id, ex_name, now, now),
+        "INSERT INTO exercises (user_id, name, tracking_mode, created_at, updated_at) VALUES (?,?,?,?,?)",
+        (user_id, ex_name, tracking_mode, now, now),
     )
     return cur.lastrowid
 
@@ -577,15 +613,27 @@ def import_flat_csv_rows(user_id, grouped):
             by_ex.setdefault(r.get("exercise") or "Unknown Exercise", []).append(r)
         order = 1
         for ex_name, set_rows in by_ex.items():
-            ex_id = ensure_exercise(user_id, ex_name)
+            tracking_mode = 'cardio' if any((sr.get('distance_miles') or sr.get('duration_seconds') or sr.get('calories')) for sr in set_rows) else 'strength'
+            ex_id = ensure_exercise(user_id, ex_name, tracking_mode=tracking_mode)
             cur3 = execute(
                 "INSERT INTO workout_exercises (workout_id, exercise_id, sort_order, exercise_name_snapshot) VALUES (?,?,?,?)",
                 (workout_id, ex_id, order, ex_name),
             )
             for sr in set_rows:
                 execute(
-                    "INSERT INTO sets (workout_exercise_id, set_number, weight, reps, rpe, set_type, logged_at, is_completed) VALUES (?,?,?,?,?,?,?,1)",
-                    (cur3.lastrowid, int(sr.get("set_number") or 1), float(sr.get("weight") or 0) if sr.get("weight") else None, int(sr.get("reps") or 0) if sr.get("reps") else None, float(sr.get("rpe") or 0) if sr.get("rpe") else None, sr.get("set_type") or "normal", now_iso()),
+                    "INSERT INTO sets (workout_exercise_id, set_number, weight, reps, duration_seconds, distance_miles, calories, rpe, set_type, logged_at, is_completed) VALUES (?,?,?,?,?,?,?,?,?,?,1)",
+                    (
+                        cur3.lastrowid,
+                        int(sr.get("set_number") or 1),
+                        float(sr.get("weight") or 0) if sr.get("weight") else None,
+                        int(sr.get("reps") or 0) if sr.get("reps") else None,
+                        int(sr.get("duration_seconds") or 0) if sr.get("duration_seconds") else None,
+                        float(sr.get("distance_miles") or 0) if sr.get("distance_miles") else None,
+                        int(sr.get("calories") or 0) if sr.get("calories") else None,
+                        float(sr.get("rpe") or 0) if sr.get("rpe") else None,
+                        sr.get("set_type") or "normal",
+                        now_iso(),
+                    ),
                 )
             order += 1
             imported += 1
@@ -640,15 +688,22 @@ def import_workspace_log():
             order = 1
             for ex_name, payload in (item.get('exercises') or {}).items():
                 display_name = ex_name.replace('_', ' ').title()
-                ex_id = ensure_exercise(user['id'], display_name)
+                is_cardio = any(k in payload for k in ('distance_miles', 'active_calories', 'duration_seconds')) and not payload.get('sets')
+                ex_id = ensure_exercise(user['id'], display_name, tracking_mode='cardio' if is_cardio else 'strength')
                 cur_we = execute(
-                    "INSERT INTO workout_exercises (workout_id, exercise_id, sort_order, exercise_name_snapshot) VALUES (?,?,?,?)",
-                    (workout_id, ex_id, order, display_name),
+                    "INSERT INTO workout_exercises (workout_id, exercise_id, sort_order, exercise_name_snapshot, notes) VALUES (?,?,?,?,?)",
+                    (workout_id, ex_id, order, display_name, payload.get('notes') or item.get('notes')),
                 )
-                for idx, s in enumerate(payload.get('sets', []), start=1):
+                if payload.get('sets'):
+                    for idx, s in enumerate(payload.get('sets', []), start=1):
+                        execute(
+                            "INSERT INTO sets (workout_exercise_id, set_number, weight, reps, duration_seconds, distance_miles, calories, rpe, set_type, notes, logged_at, is_completed) VALUES (?,?,?,?,?,?,?,?,?,?,?,1)",
+                            (cur_we.lastrowid, idx, s.get('lbs'), s.get('reps'), s.get('seconds'), s.get('distance_miles'), s.get('calories') or s.get('active_calories'), s.get('rpe'), 'warmup' if s.get('warmup') else 'normal', payload.get('notes'), now_iso()),
+                        )
+                else:
                     execute(
-                        "INSERT INTO sets (workout_exercise_id, set_number, weight, reps, duration_seconds, rpe, set_type, notes, logged_at, is_completed) VALUES (?,?,?,?,?,?,?,?,?,1)",
-                        (cur_we.lastrowid, idx, s.get('lbs'), s.get('reps'), s.get('seconds'), s.get('rpe'), 'warmup' if s.get('warmup') else 'normal', payload.get('notes'), now_iso()),
+                        "INSERT INTO sets (workout_exercise_id, set_number, duration_seconds, distance_miles, calories, set_type, notes, logged_at, is_completed) VALUES (?,?,?,?,?,?,?,?,1)",
+                        (cur_we.lastrowid, 1, payload.get('duration_seconds'), payload.get('distance_miles'), payload.get('calories') or payload.get('active_calories'), 'cardio', payload.get('notes') or item.get('notes'), now_iso()),
                     )
                 order += 1
             imported_workouts += 1

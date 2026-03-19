@@ -31,3 +31,33 @@ function repeatLastRow(button){
   repInputs[repInputs.length-1].value = srcR;
   rpeInputs[rpeInputs.length-1].value = srcE;
 }
+
+function setupDeleteModal(){
+  const modal = document.getElementById('confirm-modal');
+  const text = document.getElementById('confirm-modal-text');
+  const confirmBtn = document.getElementById('confirm-delete-btn');
+  if(!modal || !text || !confirmBtn) return;
+  let activeForm = null;
+  document.querySelectorAll('.delete-form').forEach(form => {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      activeForm = form;
+      const name = form.dataset.workoutName || 'this workout';
+      text.textContent = `Delete ${name}? This cannot be undone.`;
+      modal.classList.remove('hidden');
+      modal.setAttribute('aria-hidden', 'false');
+    });
+  });
+  document.querySelectorAll('[data-close-modal="true"]').forEach(el => {
+    el.addEventListener('click', () => {
+      modal.classList.add('hidden');
+      modal.setAttribute('aria-hidden', 'true');
+      activeForm = null;
+    });
+  });
+  confirmBtn.addEventListener('click', () => {
+    if(activeForm) activeForm.submit();
+  });
+}
+
+document.addEventListener('DOMContentLoaded', setupDeleteModal);

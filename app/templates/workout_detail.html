@@ -1,15 +1,20 @@
 {% extends 'base.html' %}
 {% block content %}
-<h1>{{ workout['name'] }}</h1>
+<div class="toolbar">
+  <h1>{{ workout['name'] }}</h1>
+  <form method="post" action="{{ url_for('delete_workout', workout_id=workout['id']) }}" class="inline-form delete-form" data-workout-name="{{ workout['name'] }}">
+    <button type="submit" class="ghost danger-text">Delete workout</button>
+  </form>
+</div>
 <p>{{ workout['started_at'] }}{% if workout['ended_at'] %} → {{ workout['ended_at'] }}{% endif %}</p>
 {% if workout['notes'] %}<p>{{ workout['notes'] }}</p>{% endif %}
 {% for block in workout_exercises %}
 <section class="card exercise-card">
   <h2>{{ block.exercise['exercise_name_snapshot'] }}</h2>
   <table>
-    <tr><th>#</th><th>Type</th><th>Weight</th><th>Reps</th><th>RPE</th></tr>
+    <tr><th>#</th><th>Type</th><th>Weight</th><th>Reps</th><th>Duration</th><th>Distance</th><th>Calories</th><th>RPE</th></tr>
     {% for s in block.sets %}
-      <tr><td>{{ s['set_number'] }}</td><td>{{ s['set_type'] }}</td><td>{{ s['weight'] or '' }}</td><td>{{ s['reps'] or '' }}</td><td>{{ s['rpe'] or '' }}</td></tr>
+      <tr><td>{{ s['set_number'] }}</td><td>{{ s['set_type'] }}</td><td>{{ s['weight'] or '' }}</td><td>{{ s['reps'] or '' }}</td><td>{{ s['duration_seconds'] or '' }}</td><td>{{ s['distance_miles'] or '' }}</td><td>{{ s['calories'] or '' }}</td><td>{{ s['rpe'] or '' }}</td></tr>
     {% endfor %}
   </table>
 </section>

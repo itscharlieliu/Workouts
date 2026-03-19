@@ -8,7 +8,14 @@
     <td>{{ w['started_at'] }}</td>
     <td>{{ w['name'] }}</td>
     <td>{{ w['status'] }}</td>
-    <td><a href="{{ url_for('workout_detail', workout_id=w['id']) }}">View</a>{% if w['status']=='in_progress' %} · <a href="{{ url_for('workout_edit', workout_id=w['id']) }}">Resume</a>{% endif %}</td>
+    <td>
+      <a href="{{ url_for('workout_detail', workout_id=w['id']) }}">View</a>
+      {% if w['status']=='in_progress' %} · <a href="{{ url_for('workout_edit', workout_id=w['id']) }}">Resume</a>{% endif %}
+      ·
+      <form method="post" action="{{ url_for('delete_workout', workout_id=w['id']) }}" class="inline-form delete-form" data-workout-name="{{ w['name'] }}">
+        <button type="submit" class="ghost danger-text">Delete</button>
+      </form>
+    </td>
   </tr>
   {% else %}
   <tr><td colspan="4">No workouts yet.</td></tr>

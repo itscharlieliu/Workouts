@@ -33,6 +33,17 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+  <div id="confirm-modal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+      <h2 id="confirm-modal-title">Confirm delete</h2>
+      <p id="confirm-modal-text">Are you sure?</p>
+      <div class="toolbar">
+        <button type="button" class="ghost" data-close-modal="true">Cancel</button>
+        <button type="button" class="danger" id="confirm-delete-btn">Delete</button>
+      </div>
+    </div>
+  </div>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

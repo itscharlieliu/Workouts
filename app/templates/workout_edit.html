@@ -23,26 +23,53 @@
 <section class="card exercise-card">
   <div class="exercise-head">
     <h2>{{ block.exercise['exercise_name_snapshot'] }}</h2>
-    {% if block.last %}<span class="muted">Last: {{ block.last['weight'] or '' }} x {{ block.last['reps'] or '' }}{% if block.last['rpe'] %} @ {{ block.last['rpe'] }}{% endif %}</span>{% endif %}
+    {% if block.last %}
+      <span class="muted">
+        Last:
+        {% if block.exercise_meta and block.exercise_meta['tracking_mode'] == 'cardio' %}
+          {% if block.last['distance_miles'] %}{{ block.last['distance_miles'] }} mi{% endif %}
+          {% if block.last['duration_seconds'] %} · {{ block.last['duration_seconds'] }}s{% endif %}
+          {% if block.last['calories'] %} · {{ block.last['calories'] }} cal{% endif %}
+        {% else %}
+          {{ block.last['weight'] or '' }} x {{ block.last['reps'] or '' }}
+        {% endif %}
+        {% if block.last['rpe'] %} @ {{ block.last['rpe'] }}{% endif %}
+      </span>
+    {% endif %}
   </div>
   <form method="post" action="{{ url_for('save_workout_exercise', we_id=block.exercise['id']) }}">
     <input type="hidden" name="workout_id" value="{{ workout['id'] }}">
     <table>
-      <tr><th>#</th><th>Type</th><th>Weight</th><th>Reps</th><th>RPE</th><th>Done</th></tr>
+      <tr>
+        <th>#</th><th>Type</th>
+        {% if block.exercise_meta and block.exercise_meta['tracking_mode'] == 'cardio' %}
+          <th>Duration (s)</th><th>Distance (mi)</th><th>Calories</th><th>RPE</th><th>Done</th>
+        {% else %}
+          <th>Weight</th><th>Reps</th><th>RPE</th><th>Done</th>
+        {% endif %}
+      </tr>
       {% for s in block.sets %}
       <tr>
         <td>{{ s['set_number'] }}<input type="hidden" name="set_id" value="{{ s['id'] }}"></td>
         <td>
           <select name="set_type_{{ s['id'] }}">
-            {% for opt in ['warmup','normal','drop','failure'] %}
+            {% for opt in ['warmup','normal','drop','failure','cardio'] %}
               <option value="{{ opt }}" {% if s['set_type']==opt %}selected{% endif %}>{{ opt }}</option>
             {% endfor %}
           </select>
         </td>
-        <td><input name="weight_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['weight'] is none else s['weight'] }}"></td>
-        <td><input name="reps_{{ s['id'] }}" type="number" value="{{ '' if s['reps'] is none else s['reps'] }}"></td>
-        <td><input name="rpe_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['rpe'] is none else s['rpe'] }}"></td>
-        <td><input name="done_{{ s['id'] }}" type="checkbox" {% if s['is_completed'] %}checked{% endif %}></td>
+        {% if block.exercise_meta and block.exercise_meta['tracking_mode'] == 'cardio' %}
+          <td><input name="duration_{{ s['id'] }}" type="number" value="{{ '' if s['duration_seconds'] is none else s['duration_seconds'] }}"></td>
+          <td><input name="distance_{{ s['id'] }}" type="number" step="0.01" value="{{ '' if s['distance_miles'] is none else s['distance_miles'] }}"></td>
+          <td><input name="calories_{{ s['id'] }}" type="number" value="{{ '' if s['calories'] is none else s['calories'] }}"></td>
+          <td><input name="rpe_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['rpe'] is none else s['rpe'] }}"></td>
+          <td><input name="done_{{ s['id'] }}" type="checkbox" {% if s['is_completed'] %}checked{% endif %}></td>
+        {% else %}
+          <td><input name="weight_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['weight'] is none else s['weight'] }}"></td>
+          <td><input name="reps_{{ s['id'] }}" type="number" value="{{ '' if s['reps'] is none else s['reps'] }}"></td>
+          <td><input name="rpe_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['rpe'] is none else s['rpe'] }}"></td>
+          <td><input name="done_{{ s['id'] }}" type="checkbox" {% if s['is_completed'] %}checked{% endif %}></td>
+        {% endif %}
       </tr>
       {% endfor %}
     </table>

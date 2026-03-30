@@ -595,6 +595,8 @@ def enforce_csrf():
 def inject_csrf_token():
     return {"csrf_token": csrf_token}
 
+app.jinja_env.globals["csrf_token"] = csrf_token
+
 
 def login_required(fn):
     @wraps(fn)

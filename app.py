@@ -1111,4 +1111,5 @@ def api_me():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8788, debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+    app.run(host="0.0.0.0", port=8788, debug=debug)

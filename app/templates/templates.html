@@ -5,6 +5,7 @@
   <section class="card">
     <h2>Create Template</h2>
     <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Name<input name="name" required></label>
       <label>Notes<textarea name="notes"></textarea></label>
       <div class="grid two compact">

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import csv
+import hmac
 import io
 import json
 import os
+import secrets
 import sqlite3
 from contextlib import closing
 from datetime import date, datetime
@@ -41,15 +43,15 @@ INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
 if SECRET_PATH.exists():
     app.secret_key = SECRET_PATH.read_text().strip()
 else:
-    import secrets
     key = secrets.token_hex(32)
     SECRET_PATH.write_text(key)
     os.chmod(SECRET_PATH, 0o600)
     app.secret_key = key
+is_secure_cookie = os.environ.get("SESSION_COOKIE_SECURE", "").lower() in {"1", "true", "yes", "on"}
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=False,
+    SESSION_COOKIE_SECURE=is_secure_cookie,
     MAX_CONTENT_LENGTH=10 * 1024 * 1024,
 )
 
@@ -564,6 +566,34 @@ def current_user():
     if user:
         session["user_id"] = user["id"]
     return user
+
+
+def csrf_token():
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+def validate_csrf() -> bool:
+    expected = session.get("csrf_token")
+    provided = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
+    return bool(expected and provided and hmac.compare_digest(expected, provided))
+
+
+@app.before_request
+def enforce_csrf():
+    if request.method == "POST":
+        if not validate_csrf():
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"error": "CSRF validation failed"}), 400
+            abort(400, description="CSRF validation failed")
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": csrf_token}
 
 
 def login_required(fn):

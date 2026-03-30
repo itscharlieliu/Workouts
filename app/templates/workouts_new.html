@@ -17,6 +17,7 @@
   <section class="card">
     <h2>Start blank workout</h2>
     <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Name<input name="name" placeholder="Optional workout name"></label>
       <button type="submit">Start blank</button>
     </form>
@@ -27,6 +28,7 @@
     <h2>Start from template</h2>
     {% for t in templates %}
       <form method="post" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="template_id" value="{{ t['id'] }}">
         <input type="hidden" name="name" value="{{ t['name'] }}">
         <strong>{{ t['name'] }}</strong>

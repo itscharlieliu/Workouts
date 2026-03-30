@@ -3,6 +3,7 @@
 <div class="toolbar">
   <h1>{{ workout['name'] }}</h1>
   <form method="post" action="{{ url_for('delete_workout', workout_id=workout['id']) }}" class="inline-form delete-form" data-workout-name="{{ workout['name'] }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit" class="ghost danger-text">Delete workout</button>
   </form>
 </div>

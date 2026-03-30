@@ -5,6 +5,7 @@
   <div class="card">
     <p>Expected columns: <code>workout_date, workout_name, exercise, set_number, weight, reps, rpe, set_type</code></p>
     <form method="post" enctype="multipart/form-data" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="file" name="file" accept=".csv,text/csv" required>
       <button type="submit">Import CSV</button>
     </form>
@@ -13,6 +14,7 @@
     <h2>Import existing workspace log</h2>
     <p>Pull in workouts already stored in <code>fitness/workout_log.jsonl</code>.</p>
     <form method="post" action="{{ url_for('import_workspace_log') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">Import workspace log</button>
     </form>
   </div>

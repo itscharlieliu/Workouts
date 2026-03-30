@@ -14,6 +14,7 @@
       {% if w['status']=='in_progress' %} · <a href="{{ url_for('workout_edit', workout_id=w['id']) }}">Resume</a>{% endif %}
       ·
       <form method="post" action="{{ url_for('delete_workout', workout_id=w['id']) }}" class="inline-form delete-form" data-workout-name="{{ w['name'] }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="ghost danger-text">Delete</button>
       </form>
     </td>

@@ -15,6 +15,7 @@
 {% endif %}
 <div class="toolbar">
   <form method="post" action="{{ url_for('finish_workout', workout_id=workout['id']) }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input name="notes" placeholder="Workout notes">
     <button type="submit">Finish Workout</button>
   </form>
@@ -36,6 +37,7 @@
 <section class="card">
   <h2>Add Exercise</h2>
   <form method="post" action="{{ url_for('workout_add_exercise', workout_id=workout['id']) }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <select name="exercise_id">
       {% for ex in exercise_options %}<option value="{{ ex['id'] }}">{{ ex['name'] }}</option>{% endfor %}
     </select>
@@ -69,6 +71,7 @@
     {% endif %}
   </div>
   <form method="post" action="{{ url_for('save_workout_exercise', we_id=block.exercise['id']) }}" class="exercise-form" data-autosave="true" data-exercise-name="{{ block.exercise['exercise_name_snapshot'] }}" data-rest-seconds="{{ block.exercise['rest_seconds'] or 90 }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="workout_id" value="{{ workout['id'] }}">
     <div class="table-wrap">
     <table>

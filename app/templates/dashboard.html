@@ -10,10 +10,44 @@
     {% endif %}
   </section>
   <section class="card">
+    <h2>Active Plan</h2>
+    <p><strong>{{ training_plan['name'] }}</strong></p>
+    <p class="muted">{{ training_plan['start_date'] }} → {{ training_plan['end_date'] }}</p>
+    {% if current_week %}
+      <p><strong>{{ current_week['label'] }}</strong></p>
+      <p class="muted">{{ current_week['focus'] }}</p>
+    {% endif %}
+    {% if next_plan_day %}
+      <p>Next planned session: <strong>{{ next_plan_day['day'] }}</strong> — {{ next_plan_day['title'] }}</p>
+    {% endif %}
+    <p><a href="{{ url_for('plan_view') }}">Open full plan</a></p>
+  </section>
+</div>
+<div class="grid two">
+  <section class="card">
     <h2>Quick Templates</h2>
     {% if templates %}
       <ul>{% for t in templates %}<li>{{ t['name'] }}</li>{% endfor %}</ul>
     {% else %}<p>No templates yet.</p>{% endif %}
+  </section>
+  <section class="card">
+    <h2>Current Week Targets</h2>
+    {% if current_week %}
+      {% for day in training_plan['weekly_structure'] %}
+        {% if day['type'] in current_week['targets'] and day['type'] not in ['optional', 'rest'] %}
+          <div class="plan-block">
+            <h3>{{ day['day'] }} — {{ day['title'] }}</h3>
+            <ul>
+              {% for item in current_week['targets'][day['type']] %}
+                <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      <p class="muted">No active week targets.</p>
+    {% endif %}
   </section>
 </div>
 <section class="card">

@@ -3,12 +3,26 @@
 <h1>Start Workout</h1>
 <div class="grid two">
   <section class="card">
+    <h2>Plan Context</h2>
+    <p><strong>{{ training_plan['name'] }}</strong></p>
+    {% if current_week %}
+      <p>{{ current_week['label'] }}</p>
+      <p class="muted">{{ current_week['focus'] }}</p>
+    {% endif %}
+    {% if next_plan_day %}
+      <p>Recommended next session: <strong>{{ next_plan_day['title'] }}</strong> on {{ next_plan_day['day'] }}</p>
+    {% endif %}
+    <p><a href="{{ url_for('plan_view') }}">Open full plan</a></p>
+  </section>
+  <section class="card">
     <h2>Start blank workout</h2>
     <form method="post" class="stack">
       <label>Name<input name="name" placeholder="Optional workout name"></label>
       <button type="submit">Start blank</button>
     </form>
   </section>
+</div>
+<div class="grid two">
   <section class="card">
     <h2>Start from template</h2>
     {% for t in templates %}
@@ -22,9 +36,9 @@
       <p>No templates yet.</p>
     {% endfor %}
   </section>
+  <section class="card">
+    <h2>Recent</h2>
+    <ul>{% for w in recent %}<li>{{ w['started_at'] }} — {{ w['name'] }}</li>{% else %}<li>No recent workouts.</li>{% endfor %}</ul>
+  </section>
 </div>
-<section class="card">
-  <h2>Recent</h2>
-  <ul>{% for w in recent %}<li>{{ w['started_at'] }} — {{ w['name'] }}</li>{% else %}<li>No recent workouts.</li>{% endfor %}</ul>
-</section>
 {% endblock %}

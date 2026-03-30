@@ -2,6 +2,17 @@
 {% block content %}
 <h1>{{ workout['name'] }}</h1>
 <p>Started: {{ workout['started_at'] }} · Status: {{ workout['status'] }}</p>
+{% if workout_targets %}
+<section class="card">
+  <h2>{{ workout_targets['week']['label'] }} targets</h2>
+  <p class="muted">{{ workout_targets['week']['focus'] }}</p>
+  <ul>
+    {% for item in workout_targets['items'] %}
+      <li>{{ item }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 <div class="toolbar">
   <form method="post" action="{{ url_for('finish_workout', workout_id=workout['id']) }}" class="inline-form">
     <input name="notes" placeholder="Workout notes">
@@ -9,7 +20,19 @@
   </form>
   <button type="button" class="secondary" onclick="startTimer(90)">Start 90s timer</button>
   <span id="timer-display"></span>
+  <span id="autosave-status" class="muted autosave-status">Autosave ready</span>
 </div>
+<section class="card progress-card">
+  <h2>Workout Progress</h2>
+  <div class="exercise-progress-list">
+    {% for block in workout_exercises %}
+      <a href="#exercise-{{ block.exercise['id'] }}" class="exercise-progress-chip {% if block.is_complete %}complete{% else %}pending{% endif %}">
+        <span class="exercise-progress-name">{{ block.exercise['exercise_name_snapshot'] }}</span>
+        <span class="exercise-progress-count">{{ block.completed_sets }}/{{ block.total_sets }}</span>
+      </a>
+    {% endfor %}
+  </div>
+</section>
 <section class="card">
   <h2>Add Exercise</h2>
   <form method="post" action="{{ url_for('workout_add_exercise', workout_id=workout['id']) }}" class="inline-form">
@@ -20,9 +43,17 @@
   </form>
 </section>
 {% for block in workout_exercises %}
-<section class="card exercise-card">
+<section class="card exercise-card {% if block.is_complete %}exercise-complete{% else %}exercise-pending{% endif %}" id="exercise-{{ block.exercise['id'] }}">
   <div class="exercise-head">
-    <h2>{{ block.exercise['exercise_name_snapshot'] }}</h2>
+    <div>
+      <h2>{{ block.exercise['exercise_name_snapshot'] }}</h2>
+      <div class="exercise-subhead">
+        <span class="exercise-status {% if block.is_complete %}complete{% else %}pending{% endif %}">
+          {% if block.is_complete %}Done{% else %}{{ block.completed_sets }}/{{ block.total_sets }} sets done{% endif %}
+        </span>
+        {% if block.exercise['rest_seconds'] %}<span class="muted">Rest {{ block.exercise['rest_seconds'] }}s</span>{% endif %}
+      </div>
+    </div>
     {% if block.last %}
       <span class="muted">
         Last:
@@ -37,20 +68,21 @@
       </span>
     {% endif %}
   </div>
-  <form method="post" action="{{ url_for('save_workout_exercise', we_id=block.exercise['id']) }}">
+  <form method="post" action="{{ url_for('save_workout_exercise', we_id=block.exercise['id']) }}" class="exercise-form" data-autosave="true" data-exercise-name="{{ block.exercise['exercise_name_snapshot'] }}" data-rest-seconds="{{ block.exercise['rest_seconds'] or 90 }}">
     <input type="hidden" name="workout_id" value="{{ workout['id'] }}">
+    <div class="table-wrap">
     <table>
       <tr>
-        <th>#</th><th>Type</th>
+        <th class="sticky-set">#</th><th>Type</th>
         {% if block.exercise_meta and block.exercise_meta['tracking_mode'] == 'cardio' %}
-          <th>Duration (s)</th><th>Distance (mi)</th><th>Calories</th><th>RPE</th><th>Done</th>
+          <th>Duration (s)</th><th>Distance (mi)</th><th>Calories</th><th>RPE</th><th class="sticky-done">Done</th>
         {% else %}
-          <th>Weight</th><th>Reps</th><th>RPE</th><th>Done</th>
+          <th>Weight</th><th>Reps</th><th>RPE</th><th class="sticky-done">Done</th>
         {% endif %}
       </tr>
       {% for s in block.sets %}
       <tr>
-        <td>{{ s['set_number'] }}<input type="hidden" name="set_id" value="{{ s['id'] }}"></td>
+        <td class="sticky-set">{{ s['set_number'] }}<input type="hidden" name="set_id" value="{{ s['id'] }}"></td>
         <td>
           <select name="set_type_{{ s['id'] }}">
             {% for opt in ['warmup','normal','drop','failure','cardio'] %}
@@ -63,24 +95,25 @@
           <td><input name="distance_{{ s['id'] }}" type="number" step="0.01" value="{{ '' if s['distance_miles'] is none else s['distance_miles'] }}"></td>
           <td><input name="calories_{{ s['id'] }}" type="number" value="{{ '' if s['calories'] is none else s['calories'] }}"></td>
           <td><input name="rpe_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['rpe'] is none else s['rpe'] }}"></td>
-          <td><input name="done_{{ s['id'] }}" type="checkbox" {% if s['is_completed'] %}checked{% endif %}></td>
+          <td class="sticky-done"><input name="done_{{ s['id'] }}" type="checkbox" {% if s['is_completed'] %}checked{% endif %}></td>
         {% else %}
           <td><input name="weight_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['weight'] is none else s['weight'] }}"></td>
           <td><input name="reps_{{ s['id'] }}" type="number" value="{{ '' if s['reps'] is none else s['reps'] }}"></td>
           <td><input name="rpe_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['rpe'] is none else s['rpe'] }}"></td>
-          <td><input name="done_{{ s['id'] }}" type="checkbox" {% if s['is_completed'] %}checked{% endif %}></td>
+          <td class="sticky-done"><input name="done_{{ s['id'] }}" type="checkbox" {% if s['is_completed'] %}checked{% endif %}></td>
         {% endif %}
       </tr>
       {% endfor %}
     </table>
+    </div>
     <div class="grid two compact">
       <label>Rest seconds<input name="rest_seconds" type="number" value="{{ block.exercise['rest_seconds'] or 90 }}"></label>
       <label>Notes<textarea name="notes">{{ block.exercise['notes'] or '' }}</textarea></label>
     </div>
     <div class="toolbar">
-      <button type="submit">Save Exercise</button>
       <button formaction="{{ url_for('add_set', we_id=block.exercise['id']) }}" formmethod="post" class="secondary">+ Add Set</button>
       <button type="button" class="ghost" onclick="repeatLastRow(this)">Repeat last set values</button>
+      <span class="muted exercise-save-status" aria-live="polite"></span>
     </div>
   </form>
 </section>

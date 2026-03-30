@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Workout Tracker{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -12,6 +13,7 @@
     {% if current_user %}
     <nav>
       <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('plan_view') }}">Plan</a>
       <a href="{{ url_for('workouts_new') }}">Start Workout</a>
       <a href="{{ url_for('history') }}">History</a>
       <a href="{{ url_for('templates') }}">Templates</a>
@@ -19,7 +21,6 @@
       <a href="{{ url_for('import_csv_view') }}">Import</a>
       <a href="{{ url_for('export_csv') }}">Export CSV</a>
     </nav>
-    <form method="post" action="{{ url_for('logout') }}"><button type="submit" class="ghost">Logout</button></form>
     {% endif %}
   </header>
   {% if active_workout %}

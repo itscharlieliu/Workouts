@@ -1,0 +1,76 @@
+{% extends 'base.html' %}
+{% block title %}Training Plan · Workout Tracker{% endblock %}
+{% block content %}
+<h1>Training Plan</h1>
+<section class="card">
+  <h2>{{ training_plan['name'] }}</h2>
+  <p>{{ training_plan['goal'] }}</p>
+  <p class="muted">{{ training_plan['start_date'] }} → {{ training_plan['end_date'] }}</p>
+  {% if current_week %}
+    <p><strong>Current:</strong> {{ current_week['label'] }}</p>
+    <p class="muted">{{ current_week['focus'] }}</p>
+  {% endif %}
+  {% if next_plan_day %}
+    <p><strong>Next planned session:</strong> {{ next_plan_day['day'] }} — {{ next_plan_day['title'] }}</p>
+  {% endif %}
+</section>
+
+<div class="grid two">
+  <section class="card">
+    <h2>Weekly Structure</h2>
+    <ul>
+      {% for item in training_plan['weekly_structure'] %}
+        <li><strong>{{ item['day'] }}:</strong> {{ item['title'] }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  <section class="card">
+    <h2>Progression Rules</h2>
+    <ul>
+      {% for item in training_plan['progression_rules'] %}
+        <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+
+<section class="card">
+  <h2>Milestones</h2>
+  <div class="grid two">
+    {% for milestone in training_plan['milestones'] %}
+      <div class="plan-block">
+        <h3>{{ milestone['label'] }}</h3>
+        <ul>
+          {% for item in milestone['items'] %}
+            <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Week-by-Week Targets</h2>
+  {% for week in training_plan['weeks'] %}
+    <div class="plan-week">
+      <h3>{{ week['label'] }}</h3>
+      <p class="muted">{{ week['focus'] }}</p>
+      <div class="grid two">
+        {% for item in training_plan['weekly_structure'] %}
+          {% if item['type'] in week['targets'] and item['type'] not in ['optional', 'rest'] %}
+            <div class="plan-block">
+              <h4>{{ item['day'] }} — {{ item['title'] }}</h4>
+              <ul>
+                {% for target in week['targets'][item['type']] %}
+                  <li>{{ target }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+</section>
+{% endblock %}

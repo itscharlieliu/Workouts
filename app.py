@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 from contextlib import closing
-from datetime import datetime
+from datetime import date, datetime
 from functools import wraps
 from pathlib import Path
 
@@ -14,6 +14,7 @@ from flask import (
     abort,
     flash,
     g,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -140,6 +141,244 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """
 
+DEFAULT_TRAINING_PLAN = {
+    "version": 1,
+    "name": "6-Week Workout Block",
+    "start_date": "2026-03-23",
+    "end_date": "2026-05-01",
+    "goal": "Build a consistent 6-week training block focused on heart health, progressive strength, and sustainable adherence.",
+    "weekly_structure": [
+        {"day": "Monday", "title": "💪 Pull (Back & Biceps)", "type": "pull"},
+        {"day": "Tuesday", "title": "💪 Push (Chest & Triceps)", "type": "push"},
+        {"day": "Wednesday", "title": "🧘 Recovery / Mobility", "type": "recovery"},
+        {"day": "Thursday", "title": "🏋️ Legs + Core", "type": "legs"},
+        {"day": "Friday", "title": "🫀 Cardio / Conditioning", "type": "cardio"},
+        {"day": "Saturday", "title": "Optional easy activity", "type": "optional"},
+        {"day": "Sunday", "title": "Full rest", "type": "rest"},
+    ],
+    "progression_rules": [
+        "Complete all work sets with good form and about 1–2 reps in reserve before increasing next week.",
+        "If reps fall off badly or form gets sloppy, repeat the same weight next week.",
+        "On push day, prioritize clean reps over weight jumps.",
+        "For isolation lifts, add reps before load when needed.",
+        "Cardio should improve heart health and work capacity without wrecking recovery.",
+    ],
+    "milestones": [
+        {
+            "label": "By end of Week 2",
+            "items": [
+                "Pendlay row: hold 115 strongly or move toward 120",
+                "Squat: move from 125 toward 130",
+                "Incline bench: stabilize clean sets at 85",
+                "Complete cardio without skipping both week-1 and week-2 sessions",
+            ],
+        },
+        {
+            "label": "By end of Week 4",
+            "items": [
+                "Pendlay row: 120 x 8–10 working range",
+                "Squat: 130–135 working range",
+                "RDL: 135 working range",
+                "Incline bench: 87.5 x 6–8 or 85 with cleaner volume",
+            ],
+        },
+        {
+            "label": "By end of Week 6",
+            "items": [
+                "Pendlay row: 125 x 8 target if recovery allows",
+                "Squat: 135 x 6–8 target if form stays solid",
+                "Flat bench: 85 x 8 working sets",
+                "Cardio: maintain one steady session per week across the block",
+            ],
+        },
+    ],
+    "weeks": [
+        {
+            "week": 1,
+            "label": "Week 1 — Mar 23 to Mar 27",
+            "focus": "Set the rhythm and hit clean baseline numbers.",
+            "targets": {
+                "pull": [
+                    "Pendlay Row: 115 × 10 × 3",
+                    "Seated Cable Row: 75–80 × 10 × 3",
+                    "Pull-ups / negatives: 3 sets",
+                    "Single-arm Lat Pulldown: 35 × 12/side × 3",
+                    "Face Pull: 25 × 15 × 3",
+                    "DB Curl: 25 × 10–12 × 3",
+                ],
+                "push": [
+                    "Incline Bench: 85 × 8 × 3",
+                    "Flat Bench: 80 × 8 × 3",
+                    "Cable Fly: 20–25 × 10–12 × 3",
+                    "Tricep Pushdown: 45 × 8–10 × 3",
+                    "Tricep Extension: 10–15 × 10–12 × 3",
+                    "Lateral Raise: 5 × 15–20 × 3",
+                ],
+                "recovery": [
+                    "Easy recovery only — walk, mobility, or light movement.",
+                ],
+                "legs": [
+                    "Squat: 125 × 8 × 3",
+                    "RDL: 125 × 10 × 3",
+                    "DB Lunges: 25 lb × 20 total × 3",
+                    "Bulgarian Split Squat: last good load × 24 total × 3",
+                    "Cable Crunch: 35 × 15 × 3",
+                    "Plank: 60–75 sec × 3",
+                ],
+                "cardio": [
+                    "30–35 min easy/moderate run, incline walk, or intervals",
+                ],
+            },
+        },
+        {
+            "week": 2,
+            "label": "Week 2 — Mar 30 to Apr 3",
+            "focus": "Small bump on the main lifts if Week 1 felt clean.",
+            "targets": {
+                "pull": [
+                    "Pendlay Row: 120 × 8–10 × 3",
+                    "Seated Cable Row: 80 × 10 × 3",
+                    "Pull-ups / negatives: 3 sets",
+                    "Single-arm Lat Pulldown: 35–40 × 12/side × 3",
+                    "Face Pull: 25–30 × 15 × 3",
+                    "DB Curl: 25 × 12 × 3",
+                ],
+                "push": [
+                    "Incline Bench: 87.5 × 6–8 × 3 if Week 1 is clean; otherwise repeat 85",
+                    "Flat Bench: 82.5–85 × 8 × 3",
+                    "Cable Fly: 20–25 × 10–12 × 3",
+                    "Tricep Pushdown: 45 × 10 × 3",
+                    "Tricep Extension: 10–15 × 10–12 × 3",
+                    "Lateral Raise: 5 × 15–20 × 3",
+                ],
+                "recovery": [
+                    "Easy recovery only — walk, mobility, or light movement.",
+                ],
+                "legs": [
+                    "Squat: 130 × 8 × 3",
+                    "RDL: 135 × 8–10 × 3",
+                    "DB Lunges: 25 lb × 20 total × 3",
+                    "Bulgarian Split Squat: slight bump only if stable",
+                    "Cable Crunch: 35–40 × 15 × 3",
+                    "Plank: 75 sec × 3",
+                ],
+                "cardio": [
+                    "35–40 min steady or intervals",
+                ],
+            },
+        },
+        {
+            "week": 3,
+            "label": "Week 3 — Apr 6 to Apr 10",
+            "focus": "Hardest week of the first half; no ego lifting.",
+            "targets": {
+                "pull": [
+                    "Pendlay Row: 120–125 × 8 × 3",
+                    "Seated Cable Row: 80–85 × 10 × 3",
+                    "Pull-ups / negatives: 3 sets",
+                    "Single-arm Lat Pulldown: 40 × 10–12/side × 3",
+                    "Face Pull: 30 × 15 × 3",
+                    "DB Curl: 25–30 × 10–12 × 3",
+                ],
+                "push": [
+                    "Incline Bench: 90 × 6–8 × 3 if recovery allows; otherwise 87.5",
+                    "Flat Bench: 85 × 8 × 3",
+                    "Cable Fly: 20–25 × 10–12 × 3",
+                    "Tricep Pushdown: 45–50 × 8–10 × 3",
+                    "Tricep Extension: 10–15 × 10–12 × 3",
+                    "Lateral Raise: 5 × 15–20 × 3, strict form",
+                ],
+                "recovery": [
+                    "Easy recovery only — walk, mobility, or light movement.",
+                ],
+                "legs": [
+                    "Squat: 135 × 6–8 × 3",
+                    "RDL: 135 × 10 × 3",
+                    "DB Lunges: 25–30 lb × 20 total × 3",
+                    "Bulgarian Split Squat: hold or slight bump",
+                    "Cable Crunch: 40 × 12–15 × 3",
+                    "Plank: 75–90 sec × 3",
+                ],
+                "cardio": [
+                    "30–40 min steady or intervals",
+                ],
+            },
+        },
+        {
+            "week": 4,
+            "label": "Week 4 — Apr 13 to Apr 17",
+            "focus": "Consolidation week: repeat the best successful loads or add a small bump.",
+            "targets": {
+                "pull": [
+                    "Repeat the best successful row week or add a small bump if reps stay clean",
+                    "Keep accessories clean and steady",
+                ],
+                "push": [
+                    "Repeat the best successful incline week or add a small bump if bar speed stays good",
+                    "Keep lateral raises and triceps strict",
+                ],
+                "recovery": [
+                    "Easy recovery only — walk, mobility, or light movement.",
+                ],
+                "legs": [
+                    "Repeat or slightly improve the best squat/RDL week",
+                    "No grinding",
+                ],
+                "cardio": [
+                    "One steady 30–40 min session",
+                ],
+            },
+        },
+        {
+            "week": 5,
+            "label": "Week 5 — Apr 20 to Apr 24",
+            "focus": "Push again if Week 4 felt solid.",
+            "targets": {
+                "pull": [
+                    "Pendlay Row: aim for 125 × 8 × 3",
+                    "Seated Cable Row: 85 × 10 × 3",
+                ],
+                "push": [
+                    "Incline Bench: 90 × 6–8 × 3 or best clean repeat",
+                    "Flat Bench: 85 × 8 × 3",
+                ],
+                "recovery": [
+                    "Easy recovery only — walk, mobility, or light movement.",
+                ],
+                "legs": [
+                    "Squat: 135 × 8 or small bump if clearly ready",
+                    "RDL: 135–145 range depending on feel",
+                ],
+                "cardio": [
+                    "35–40 min steady cardio or intervals",
+                ],
+            },
+        },
+        {
+            "week": 6,
+            "label": "Week 6 — Apr 27 to May 1",
+            "focus": "Finish strong and assess what to change next.",
+            "targets": {
+                "pull": [
+                    "Hit the best clean row performance of the block",
+                ],
+                "push": [
+                    "Hit the best clean incline and flat bench performance of the block",
+                ],
+                "recovery": [
+                    "Easy recovery only — walk, mobility, or light movement.",
+                ],
+                "legs": [
+                    "Hit the best clean squat and RDL performance of the block",
+                ],
+                "cardio": [
+                    "Maintain cardio consistency and assess recovery at the end of the block",
+                ],
+            },
+        },
+    ],
+}
+
 
 def now_iso():
     return datetime.now().isoformat(timespec="seconds")
@@ -186,7 +425,11 @@ def close_db(exc=None):
 @app.context_processor
 def inject_globals():
     user = current_user()
-    return {"current_user": user, "active_workout": get_active_workout(user["id"]) if user else None}
+    return {
+        "current_user": user,
+        "active_workout": get_active_workout(user["id"]) if user else None,
+        "active_training_plan": get_training_plan(user["id"]) if user else None,
+    }
 
 
 def query_one(sql, args=()):
@@ -204,11 +447,123 @@ def execute(sql, args=()):
     return cur
 
 
+def get_setting(user_id, key, default=None):
+    row = query_one("SELECT value_json FROM settings WHERE user_id = ? AND key = ?", (user_id, key))
+    if not row:
+        return default
+    try:
+        return json.loads(row["value_json"])
+    except json.JSONDecodeError:
+        return default
+
+
+def set_setting(user_id, key, value):
+    execute(
+        """
+        INSERT INTO settings (user_id, key, value_json, updated_at)
+        VALUES (?,?,?,?)
+        ON CONFLICT(user_id, key)
+        DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+        """,
+        (user_id, key, json.dumps(value), now_iso()),
+    )
+
+
+def get_training_plan(user_id):
+    plan = get_setting(user_id, "active_training_plan")
+    if plan:
+        return plan
+    plan = json.loads(json.dumps(DEFAULT_TRAINING_PLAN))
+    set_setting(user_id, "active_training_plan", plan)
+    return plan
+
+
+def parse_iso_date(value):
+    return datetime.fromisoformat(value).date()
+
+
+def get_plan_week(plan, on_date=None):
+    on_date = on_date or date.today()
+    start_date = parse_iso_date(plan["start_date"])
+    if on_date < start_date:
+        return plan["weeks"][0]
+    delta_days = (on_date - start_date).days
+    week_num = delta_days // 7 + 1
+    weeks = plan.get("weeks") or []
+    if not weeks:
+        return None
+    week_num = max(1, min(week_num, len(weeks)))
+    return next((w for w in weeks if w.get("week") == week_num), weeks[min(week_num - 1, len(weeks) - 1)])
+
+
+def get_workout_type_from_name(name):
+    lowered = (name or "").lower()
+    if "pull" in lowered:
+        return "pull"
+    if "push" in lowered:
+        return "push"
+    if "leg" in lowered:
+        return "legs"
+    if "cardio" in lowered or "condition" in lowered or "run" in lowered:
+        return "cardio"
+    if "recovery" in lowered or "mobility" in lowered:
+        return "recovery"
+    return None
+
+
+def get_current_targets_for_workout(plan, workout_name, on_date=None):
+    week = get_plan_week(plan, on_date=on_date)
+    workout_type = get_workout_type_from_name(workout_name)
+    if not week or not workout_type:
+        return None
+    targets = week.get("targets", {}).get(workout_type)
+    if not targets:
+        return None
+    return {"week": week, "type": workout_type, "items": targets}
+
+
+def has_completed_workout_type_on_date(user_id, workout_type, on_date):
+    rows = query_all(
+        "SELECT name FROM workouts WHERE user_id = ? AND status = 'completed' AND date(started_at) = ?",
+        (user_id, on_date.isoformat()),
+    )
+    return any(get_workout_type_from_name(row["name"]) == workout_type for row in rows)
+
+
+def get_next_plan_day(plan, user_id=None, on_date=None):
+    on_date = on_date or date.today()
+    weekdays = {
+        0: "Monday",
+        1: "Tuesday",
+        2: "Wednesday",
+        3: "Thursday",
+        4: "Friday",
+        5: "Saturday",
+        6: "Sunday",
+    }
+    by_day = {item["day"]: item for item in plan.get("weekly_structure", [])}
+    for offset in range(14):
+        d = on_date.fromordinal(on_date.toordinal() + offset)
+        entry = by_day.get(weekdays[d.weekday()])
+        if not entry or entry.get("type") in {"optional", "rest"}:
+            continue
+        if user_id and has_completed_workout_type_on_date(user_id, entry.get("type"), d):
+            continue
+        return {"date": d.isoformat(), **entry}
+    return None
+
+
 def current_user():
     uid = session.get("user_id")
-    if not uid:
-        return None
-    return query_one("SELECT * FROM users WHERE id = ?", (uid,))
+    if uid:
+        user = query_one("SELECT * FROM users WHERE id = ?", (uid,))
+        if user:
+            return user
+    # single-user mode: auto-use the first account if it exists
+    user = query_one("SELECT * FROM users ORDER BY id LIMIT 1")
+    if user:
+        session["user_id"] = user["id"]
+    return user
 
 
 def login_required(fn):
@@ -251,7 +606,17 @@ def get_workout_exercises(workout_id):
             (ex["id"],),
         )
         ex_meta = query_one("SELECT * FROM exercises WHERE id = ?", (ex["exercise_id"],)) if ex["exercise_id"] else None
-        enriched.append({"exercise": ex, "exercise_meta": ex_meta, "sets": sets, "last": get_last_performance(ex["exercise_id"], workout_id) if ex["exercise_id"] else None})
+        completed_sets = sum(1 for s in sets if s["is_completed"])
+        total_sets = len(sets)
+        enriched.append({
+            "exercise": ex,
+            "exercise_meta": ex_meta,
+            "sets": sets,
+            "last": get_last_performance(ex["exercise_id"], workout_id) if ex["exercise_id"] else None,
+            "completed_sets": completed_sets,
+            "total_sets": total_sets,
+            "is_complete": total_sets > 0 and completed_sets == total_sets,
+        })
     return enriched
 
 
@@ -306,9 +671,9 @@ def create_workout_from_template(user_id, template_id=None, name=None):
 
 @app.route("/")
 def index():
-    if current_user():
-        return redirect(url_for("dashboard"))
-    return redirect(url_for("login"))
+    if user_count() == 0:
+        return redirect(url_for("setup_user"))
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/setup", methods=["GET", "POST"])
@@ -335,24 +700,16 @@ def setup_user():
 def login():
     if user_count() == 0:
         return redirect(url_for("setup_user"))
-    if request.method == "POST":
-        username = request.form["username"].strip()
-        password = request.form["password"]
-        user = query_one("SELECT * FROM users WHERE username = ?", (username,))
-        if not user or not check_password_hash(user["password_hash"], password):
-            flash("Invalid login.")
-        else:
-            session.clear()
-            session["user_id"] = user["id"]
-            return redirect(url_for("dashboard"))
-    return render_template("login.html")
+    # single-user mode: no login wall
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/logout", methods=["POST"])
 @login_required
 def logout():
+    # keep route for compatibility, but just bounce back in single-user mode
     session.clear()
-    return redirect(url_for("login"))
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/dashboard")
@@ -362,7 +719,28 @@ def dashboard():
     active = get_active_workout(user["id"])
     recent = query_all("SELECT * FROM workouts WHERE user_id = ? ORDER BY started_at DESC LIMIT 5", (user["id"],))
     templates = query_all("SELECT * FROM workout_templates WHERE user_id = ? AND is_archived = 0 ORDER BY updated_at DESC LIMIT 5", (user["id"],))
-    return render_template("dashboard.html", active=active, recent=recent, templates=templates)
+    plan = get_training_plan(user["id"])
+    current_week = get_plan_week(plan)
+    next_plan_day = get_next_plan_day(plan, user_id=user["id"])
+    return render_template(
+        "dashboard.html",
+        active=active,
+        recent=recent,
+        templates=templates,
+        training_plan=plan,
+        current_week=current_week,
+        next_plan_day=next_plan_day,
+    )
+
+
+@app.route("/plan")
+@login_required
+def plan_view():
+    user = current_user()
+    plan = get_training_plan(user["id"])
+    current_week = get_plan_week(plan)
+    next_plan_day = get_next_plan_day(plan, user_id=user["id"])
+    return render_template("plan.html", training_plan=plan, current_week=current_week, next_plan_day=next_plan_day)
 
 
 @app.route("/exercises", methods=["GET", "POST"])
@@ -424,7 +802,10 @@ def workouts_new():
         return redirect(url_for("workout_edit", workout_id=workout_id))
     templates = query_all("SELECT * FROM workout_templates WHERE user_id = ? AND is_archived = 0 ORDER BY name", (user["id"],))
     recent = query_all("SELECT * FROM workouts WHERE user_id = ? ORDER BY started_at DESC LIMIT 5", (user["id"],))
-    return render_template("workouts_new.html", templates=templates, recent=recent)
+    plan = get_training_plan(user["id"])
+    current_week = get_plan_week(plan)
+    next_plan_day = get_next_plan_day(plan, user_id=user["id"])
+    return render_template("workouts_new.html", templates=templates, recent=recent, training_plan=plan, current_week=current_week, next_plan_day=next_plan_day)
 
 
 @app.route("/workouts/<int:workout_id>/edit")
@@ -433,7 +814,16 @@ def workout_edit(workout_id):
     user = current_user()
     workout = get_workout(workout_id, user["id"])
     exercise_options = query_all("SELECT * FROM exercises WHERE user_id = ? AND is_archived = 0 ORDER BY name", (user["id"],))
-    return render_template("workout_edit.html", workout=workout, workout_exercises=get_workout_exercises(workout_id), exercise_options=exercise_options)
+    plan = get_training_plan(user["id"])
+    workout_date = datetime.fromisoformat(workout["started_at"]).date() if workout["started_at"] else date.today()
+    workout_targets = get_current_targets_for_workout(plan, workout["name"], on_date=workout_date)
+    return render_template(
+        "workout_edit.html",
+        workout=workout,
+        workout_exercises=get_workout_exercises(workout_id),
+        exercise_options=exercise_options,
+        workout_targets=workout_targets,
+    )
 
 
 @app.route("/workouts/<int:workout_id>/add-exercise", methods=["POST"])
@@ -490,6 +880,8 @@ def save_workout_exercise(we_id):
              we_id),
         )
     execute("UPDATE workout_exercises SET notes=?, rest_seconds=? WHERE id=?", (request.form.get("notes"), int(request.form.get("rest_seconds") or 90), we_id))
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest" or "application/json" in (request.headers.get("Accept") or ""):
+        return jsonify({"ok": True, "workout_id": we["workout_id"], "workout_exercise_id": we_id, "saved_at": now_iso()})
     return redirect(url_for("workout_edit", workout_id=we["workout_id"]))
 
 

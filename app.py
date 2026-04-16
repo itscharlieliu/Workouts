@@ -6,10 +6,12 @@ import json
 import os
 import secrets
 import sqlite3
+import subprocess
 from contextlib import closing
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from functools import wraps
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from flask import (
     Flask,
@@ -31,6 +33,13 @@ BASE_DIR = Path(__file__).resolve().parent
 INSTANCE_DIR = BASE_DIR / "instance"
 DB_PATH = INSTANCE_DIR / "workout_tracker.db"
 SECRET_PATH = BASE_DIR / "instance" / "secret_key.txt"
+API_TOKEN_PATH = INSTANCE_DIR / "api_token.txt"
+WORKSPACE_DIR = Path('/home/node/.openclaw/workspace')
+LOCATION_DB_PATH = WORKSPACE_DIR / 'location-automation' / 'data' / 'geofence_hooks.db'
+CRON_JOBS_PATH = Path('/home/node/.openclaw/cron/jobs.json')
+CRON_RUNS_DIR = Path('/home/node/.openclaw/cron/runs')
+WHOOP_STATUS_CMD = ['python3', str(WORKSPACE_DIR / '.local' / 'bin' / 'whoop_agent.py'), 'status']
+LA_TZ = ZoneInfo('America/Los_Angeles')
 
 app = Flask(
     __name__,
@@ -386,6 +395,224 @@ def now_iso():
     return datetime.now().isoformat(timespec="seconds")
 
 
+def utc_now():
+    return datetime.now(ZoneInfo('UTC'))
+
+
+def parse_iso(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        return None
+
+
+def format_relative(dt):
+    if not dt:
+        return 'never'
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo('UTC'))
+    delta = utc_now() - dt.astimezone(ZoneInfo('UTC'))
+    seconds = int(delta.total_seconds())
+    future = seconds < 0
+    seconds = abs(seconds)
+    if seconds < 60:
+        amount, unit = seconds, 's'
+    elif seconds < 3600:
+        amount, unit = seconds // 60, 'm'
+    elif seconds < 86400:
+        amount, unit = seconds // 3600, 'h'
+    else:
+        amount, unit = seconds // 86400, 'd'
+    return f"in {amount}{unit}" if future else f"{amount}{unit} ago"
+
+
+def to_local_label(value):
+    dt = parse_iso(value) if isinstance(value, str) else value
+    if not dt:
+        return 'never'
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo('UTC'))
+    return dt.astimezone(LA_TZ).strftime('%b %-d, %-I:%M %p')
+
+
+def _bars_for_daily_counts(rows, days=14):
+    today = datetime.now(LA_TZ).date()
+    start = today - timedelta(days=days - 1)
+    counts = {row['d']: row['c'] for row in rows}
+    max_count = max([counts.get((start + timedelta(days=i)).isoformat(), 0) for i in range(days)] + [1])
+    items = []
+    for i in range(days):
+        d = start + timedelta(days=i)
+        count = counts.get(d.isoformat(), 0)
+        items.append({
+            'date': d.isoformat(),
+            'label': d.strftime('%m/%d'),
+            'count': count,
+            'percent': round((count / max_count) * 100, 1) if max_count else 0,
+        })
+    return items
+
+
+def _level_from_age(hours, warn_hours, error_hours):
+    if hours is None:
+        return 'ERROR'
+    if hours >= error_hours:
+        return 'ERROR'
+    if hours >= warn_hours:
+        return 'WARN'
+    return 'OK'
+
+
+def collect_ops_snapshot(user_id):
+    now = utc_now()
+    snapshot = {
+        'generated_at_local': now.astimezone(LA_TZ).strftime('%Y-%m-%d %I:%M:%S %p %Z'),
+        'status_cards': [],
+        'recent_signals': [],
+    }
+
+    active = query_one("SELECT id, name, started_at FROM workouts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1", (user_id,))
+    completed_rows = query_all("SELECT date(started_at) AS d, count(*) AS c FROM workouts WHERE user_id = ? AND status = 'completed' AND date(started_at) >= date('now','-13 day') GROUP BY date(started_at) ORDER BY d", (user_id,))
+    top_types = query_all("SELECT name, count(*) AS c FROM workouts WHERE user_id = ? AND status = 'completed' AND date(started_at) >= date('now','-30 day') GROUP BY name ORDER BY c DESC, name LIMIT 8", (user_id,))
+    summary = query_one("SELECT count(*) AS total, sum(case when status='completed' then 1 else 0 end) AS completed, sum(case when status='in_progress' then 1 else 0 end) AS in_progress FROM workouts WHERE user_id = ?", (user_id,))
+    last_completed = query_one("SELECT name, started_at, ended_at FROM workouts WHERE user_id = ? AND status = 'completed' ORDER BY started_at DESC LIMIT 1", (user_id,))
+    completed_30d_row = query_one("SELECT count(*) AS c FROM workouts WHERE user_id = ? AND status = 'completed' AND date(started_at) >= date('now','-30 day')", (user_id,))
+    workouts = {
+        'completed_14d': _bars_for_daily_counts(completed_rows, 14),
+        'completed_30d': (completed_30d_row['c'] if completed_30d_row else 0) or 0,
+        'in_progress': (summary['in_progress'] if summary else 0) or 0,
+        'last_completed_label': to_local_label(last_completed['ended_at'] or last_completed['started_at']) if last_completed else 'never',
+        'top_types': [{'name': row['name'], 'count': row['c']} for row in top_types],
+    }
+    snapshot['workouts'] = workouts
+    workout_level = 'OK' if workouts['completed_30d'] >= 8 else ('WARN' if workouts['completed_30d'] >= 4 else 'ERROR')
+    workout_summary = f"{workouts['completed_30d']} completed in 30d"
+    if active:
+        workout_summary += f" · active: {active['name']}"
+        snapshot['recent_signals'].append({'title': 'Active workout open', 'detail': f"{active['name']} started {to_local_label(active['started_at'])}"})
+    snapshot['status_cards'].append({'name': 'Workout tracker', 'level': workout_level, 'summary': workout_summary, 'detail': f"Last completed {workouts['last_completed_label']}"})
+
+    location = {
+        'visits_14d': _bars_for_daily_counts([], 14),
+        'events_30d': 0,
+        'last_event_label': 'never',
+        'top_zones': [],
+    }
+    if LOCATION_DB_PATH.exists():
+        with sqlite3.connect(LOCATION_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            visit_rows = conn.execute("SELECT date(timestamp) AS d, count(*) AS c FROM inbound_events WHERE event='arrive' AND date(timestamp) >= date('now','-13 day') GROUP BY date(timestamp) ORDER BY d").fetchall()
+            top_zone_rows = conn.execute("SELECT coalesce(trigger_name, place_name, address, 'unknown') AS zone, count(*) AS c FROM inbound_events WHERE date(timestamp) >= date('now','-30 day') GROUP BY 1 ORDER BY c DESC, zone LIMIT 8").fetchall()
+            last_event = conn.execute("SELECT event, timestamp, coalesce(trigger_name, place_name, address, 'unknown') AS label FROM inbound_events ORDER BY timestamp DESC LIMIT 1").fetchone()
+            events_30d = conn.execute("SELECT count(*) AS c FROM inbound_events WHERE date(timestamp) >= date('now','-30 day')").fetchone()
+            location['visits_14d'] = _bars_for_daily_counts(visit_rows, 14)
+            location['events_30d'] = (events_30d['c'] if events_30d else 0) or 0
+            location['top_zones'] = [{'name': row['zone'], 'count': row['c']} for row in top_zone_rows]
+            if last_event:
+                last_dt = parse_iso(last_event['timestamp'])
+                hours = ((now - last_dt.astimezone(ZoneInfo('UTC'))).total_seconds() / 3600.0) if last_dt else None
+                location['last_event_label'] = f"{last_event['event']} · {last_event['label']} · {to_local_label(last_event['timestamp'])}"
+                snapshot['status_cards'].append({'name': 'Location tracker', 'level': _level_from_age(hours, 24, 72), 'summary': f"Last event {format_relative(last_dt)}", 'detail': location['last_event_label']})
+                snapshot['recent_signals'].append({'title': 'Latest location event', 'detail': location['last_event_label']})
+            else:
+                snapshot['status_cards'].append({'name': 'Location tracker', 'level': 'ERROR', 'summary': 'No location events found', 'detail': 'The location DB exists but no inbound events are stored yet.'})
+    else:
+        snapshot['status_cards'].append({'name': 'Location tracker', 'level': 'ERROR', 'summary': 'DB missing', 'detail': str(LOCATION_DB_PATH)})
+    snapshot['location'] = location
+
+    browser_card = {'name': 'Browser automation', 'level': 'WARN', 'summary': 'Unknown', 'detail': ''}
+    browser_path = str(Path.home() / '.cache' / 'ms-playwright')
+    try:
+        chrome_check = subprocess.run(['bash', '-lc', "find ~/.cache/ms-playwright -name chrome -type f | head -1"], capture_output=True, text=True, timeout=4)
+        chrome_path = (chrome_check.stdout or '').strip()
+        cdp_check = subprocess.run(['bash', '-lc', "curl -fsS http://127.0.0.1:18800/json/version | head -c 300"], capture_output=True, text=True, timeout=4)
+        if cdp_check.returncode == 0 and cdp_check.stdout.strip():
+            browser_card.update({'level': 'OK', 'summary': 'CDP responding', 'detail': cdp_check.stdout.strip()[:240]})
+        elif chrome_path:
+            browser_card.update({'level': 'WARN', 'summary': 'Installed but stopped', 'detail': chrome_path})
+        else:
+            browser_card.update({'level': 'ERROR', 'summary': 'Browser binary missing', 'detail': browser_path})
+    except Exception as exc:
+        browser_card.update({'level': 'WARN', 'summary': 'Probe uncertain', 'detail': str(exc)})
+    snapshot['status_cards'].append(browser_card)
+
+    whoop_card = {'name': 'WHOOP token', 'level': 'WARN', 'summary': 'Unknown', 'detail': ''}
+    try:
+        result = subprocess.run(WHOOP_STATUS_CMD, capture_output=True, text=True, timeout=12)
+        data = json.loads(result.stdout or '{}') if result.returncode == 0 else {}
+        authenticated = bool(data.get('authenticated'))
+        needs_refresh = bool(data.get('needs_refresh'))
+        if authenticated and not needs_refresh:
+            whoop_card.update({'level': 'OK', 'summary': 'Healthy', 'detail': 'Authenticated and current.'})
+        elif authenticated and needs_refresh:
+            whoop_card.update({'level': 'WARN', 'summary': 'Needs refresh', 'detail': 'Token exists but currently needs refresh.'})
+        else:
+            whoop_card.update({'level': 'ERROR', 'summary': 'Not authenticated', 'detail': (result.stderr or result.stdout).strip()[:240]})
+    except Exception as exc:
+        whoop_card.update({'level': 'ERROR', 'summary': 'Probe failed', 'detail': str(exc)})
+    snapshot['status_cards'].append(whoop_card)
+
+    cron_jobs = []
+    scheduler_total = scheduler_ok = task_total = task_ok = hidden_failures = 0
+    if CRON_JOBS_PATH.exists():
+        cron_doc = json.loads(CRON_JOBS_PATH.read_text())
+        for job in cron_doc.get('jobs', []):
+            state = job.get('state', {})
+            scheduler_total += 1
+            if state.get('lastRunStatus') == 'ok':
+                scheduler_ok += 1
+            task_level = 'OK' if state.get('lastRunStatus') == 'ok' else 'ERROR'
+            last_result = state.get('lastRunStatus') or 'n/a'
+            run_file = CRON_RUNS_DIR / f"{job['id']}.jsonl"
+            if run_file.exists():
+                lines = [line for line in run_file.read_text(errors='ignore').splitlines() if line.strip()]
+                if lines:
+                    try:
+                        event = json.loads(lines[-1])
+                        summary = (event.get('summary') or event.get('error') or '').strip()
+                        if summary:
+                            last_result = summary
+                        lower = summary.lower()
+                        if any(token in lower for token in [' failed', 'failure', 'error', 'expired_access_token', 'not-delivered']):
+                            task_level = 'WARN' if task_level == 'OK' else 'ERROR'
+                            hidden_failures += 1
+                    except Exception:
+                        pass
+            task_total += 1
+            if task_level == 'OK':
+                task_ok += 1
+            next_run_ms = state.get('nextRunAtMs')
+            next_run_label = 'n/a'
+            if next_run_ms:
+                next_run_label = datetime.fromtimestamp(next_run_ms / 1000, tz=ZoneInfo('UTC')).astimezone(LA_TZ).strftime('%b %-d, %-I:%M %p')
+            cron_jobs.append({
+                'name': job.get('name', job.get('id')),
+                'level': task_level,
+                'schedule': (job.get('schedule') or {}).get('expr') or (job.get('schedule') or {}).get('kind') or 'unknown',
+                'next_run_label': next_run_label,
+                'last_result': (last_result[:110] + '…') if len(last_result) > 110 else last_result,
+            })
+    scheduler_rate = f"{round((scheduler_ok / scheduler_total) * 100)}%" if scheduler_total else 'n/a'
+    task_rate = f"{round((task_ok / task_total) * 100)}%" if task_total else 'n/a'
+    snapshot['cron'] = {'jobs': cron_jobs, 'scheduler_success_rate': scheduler_rate, 'task_success_rate': task_rate}
+    snapshot['status_cards'].append({'name': 'Cron jobs', 'level': 'WARN' if hidden_failures else 'OK', 'summary': f"{scheduler_rate} scheduler success · {task_rate} task success", 'detail': f"{len(cron_jobs)} jobs tracked" + (f" · {hidden_failures} hidden failure(s) found in run summaries" if hidden_failures else '')})
+
+    startup_checks = []
+    if (WORKSPACE_DIR / 'scripts' / 'container-startup.sh').exists():
+        startup_checks.append('container startup present')
+    if (WORKSPACE_DIR / 'career' / 'site' / 'server.py').exists():
+        startup_checks.append('career portal installed')
+    snapshot['status_cards'].append({'name': 'Workspace plumbing', 'level': 'INFO', 'summary': 'Persistent startup hooks configured', 'detail': ', '.join(startup_checks) if startup_checks else 'No extra startup hooks detected'})
+
+    if hidden_failures:
+        snapshot['recent_signals'].append({'title': 'Cron hidden failures', 'detail': f'{hidden_failures} job(s) looked scheduler-green but included failure text in their run output.'})
+    if len(snapshot['recent_signals']) < 3:
+        snapshot['recent_signals'].append({'title': 'Workout cadence', 'detail': f"{workouts['completed_30d']} completed workout(s) in the last 30 days."})
+    return snapshot
+
+
 def get_db():
     if "db" not in g:
         conn = sqlite3.connect(DB_PATH)
@@ -568,6 +795,23 @@ def current_user():
     return user
 
 
+def load_api_token():
+    INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
+    if not API_TOKEN_PATH.exists() or not API_TOKEN_PATH.read_text(encoding="utf-8").strip():
+        API_TOKEN_PATH.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+        os.chmod(API_TOKEN_PATH, 0o600)
+    return API_TOKEN_PATH.read_text(encoding="utf-8").strip()
+
+
+def has_valid_api_token() -> bool:
+    expected = load_api_token()
+    authz = request.headers.get("Authorization", "")
+    bearer = authz.removeprefix("Bearer ").strip() if authz.startswith("Bearer ") else None
+    alt = request.headers.get("X-Workout-Token", "").strip() or None
+    provided = bearer or alt
+    return bool(provided and hmac.compare_digest(provided, expected))
+
+
 def csrf_token():
     token = session.get("csrf_token")
     if not token:
@@ -585,8 +829,10 @@ def validate_csrf() -> bool:
 @app.before_request
 def enforce_csrf():
     if request.method == "POST":
+        if request.path.startswith("/api/") and has_valid_api_token():
+            return None
         if not validate_csrf():
-            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.path.startswith("/api/"):
                 return jsonify({"error": "CSRF validation failed"}), 400
             abort(400, description="CSRF validation failed")
 
@@ -1135,11 +1381,327 @@ def import_workspace_log():
     return redirect(url_for('history'))
 
 
+def build_workout_payload(user_id, workout_id):
+    workout = get_workout(workout_id, user_id)
+    exercises = []
+    for item in get_workout_exercises(workout_id):
+        we = item["exercise"]
+        exercises.append({
+            "id": we["id"],
+            "name": we["exercise_name_snapshot"],
+            "notes": we["notes"],
+            "rest_seconds": we["rest_seconds"],
+            "sets": [
+                {
+                    "id": s["id"],
+                    "set_number": s["set_number"],
+                    "set_type": s["set_type"],
+                    "weight": s["weight"],
+                    "reps": s["reps"],
+                    "duration_seconds": s["duration_seconds"],
+                    "rpe": s["rpe"],
+                    "is_completed": s["is_completed"],
+                    "notes": s["notes"],
+                }
+                for s in item["sets"]
+            ],
+        })
+    return {
+        "id": workout["id"],
+        "name": workout["name"],
+        "status": workout["status"],
+        "started_at": workout["started_at"],
+        "ended_at": workout["ended_at"],
+        "notes": workout["notes"],
+        "template_id": workout["template_id"],
+        "exercises": exercises,
+    }
+
+
 @app.route("/api/me")
 @login_required
 def api_me():
     user = current_user()
     return {"id": user["id"], "username": user["username"]}
+
+
+@app.route("/api/workouts/active")
+@login_required
+def api_workouts_active():
+    user = current_user()
+    active = get_active_workout(user["id"])
+    if not active:
+        return jsonify({"workout": None})
+    return jsonify({"workout": build_workout_payload(user["id"], active["id"])})
+
+
+@app.route("/api/workouts/<int:workout_id>")
+@login_required
+def api_workout_detail(workout_id):
+    user = current_user()
+    return jsonify({"workout": build_workout_payload(user["id"], workout_id)})
+
+
+@app.route("/api/plan")
+@login_required
+def api_plan():
+    user = current_user()
+    plan = get_training_plan(user["id"])
+    current_week = get_plan_week(plan)
+    return jsonify({
+        "plan": plan,
+        "current_week": current_week,
+    })
+
+
+def replace_sets_for_workout_exercise(workout_exercise_id, sets_payload, logged_at=None):
+    logged_at = logged_at or now_iso()
+    execute("DELETE FROM sets WHERE workout_exercise_id = ?", (workout_exercise_id,))
+    sets_payload = sets_payload or []
+    if not sets_payload:
+        sets_payload = [{"set_number": 1}]
+    for idx, s in enumerate(sets_payload, start=1):
+        execute(
+            "INSERT INTO sets (workout_exercise_id, set_number, set_type, weight, reps, duration_seconds, rpe, is_completed, notes, logged_at, distance_miles, calories) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                workout_exercise_id,
+                s.get("set_number") or idx,
+                s.get("set_type") or "normal",
+                s.get("weight"),
+                s.get("reps"),
+                s.get("duration_seconds"),
+                s.get("rpe"),
+                int(bool(s.get("is_completed", False))),
+                s.get("notes"),
+                logged_at,
+                s.get("distance_miles"),
+                s.get("calories"),
+            ),
+        )
+
+
+@app.route("/api/workouts/start", methods=["POST"])
+@login_required
+def api_workouts_start():
+    user = current_user()
+    payload = request.get_json(force=True, silent=False) or {}
+
+    existing = get_active_workout(user["id"])
+    if existing and not payload.get("allow_parallel"):
+        return jsonify({
+            "error": "active workout already exists",
+            "workout": build_workout_payload(user["id"], existing["id"]),
+        }), 409
+
+    template_id = payload.get("template_id")
+    template_name = (payload.get("template_name") or "").strip()
+    name = (payload.get("name") or "").strip() or None
+    notes = payload.get("notes")
+    exercises = payload.get("exercises") or []
+
+    if template_name and not template_id:
+        tpl = query_one("SELECT * FROM workout_templates WHERE user_id = ? AND lower(name)=lower(?)", (user["id"], template_name))
+        if not tpl:
+            return jsonify({"error": f"template not found: {template_name}"}), 404
+        template_id = tpl["id"]
+
+    if template_id and not exercises:
+        workout_id = create_workout_from_template(user["id"], int(template_id), name)
+        if notes:
+            execute("UPDATE workouts SET notes = ?, updated_at = ? WHERE id = ?", (notes, now_iso(), workout_id))
+        return jsonify({"workout": build_workout_payload(user["id"], workout_id)})
+
+    if not exercises:
+        return jsonify({"error": "provide template_id/template_name or exercises"}), 400
+
+    created = now_iso()
+    cur = execute(
+        "INSERT INTO workouts (user_id, template_id, name, started_at, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        (user["id"], template_id, name or f"Workout {datetime.now().strftime('%Y-%m-%d %H:%M')}", created, "in_progress", notes, created, created),
+    )
+    workout_id = cur.lastrowid
+
+    for idx, item in enumerate(exercises, start=1):
+        ex_name = (item.get("name") or "").strip()
+        if not ex_name:
+            return jsonify({"error": f"exercise at position {idx} is missing name"}), 400
+        tracking_mode = item.get("tracking_mode") or "strength"
+        ex_id = ensure_exercise(user["id"], ex_name, tracking_mode=tracking_mode)
+        cur_we = execute(
+            "INSERT INTO workout_exercises (workout_id, exercise_id, sort_order, exercise_name_snapshot, notes, rest_seconds) VALUES (?,?,?,?,?,?)",
+            (workout_id, ex_id, item.get("sort_order") or idx, ex_name, item.get("notes"), item.get("rest_seconds")),
+        )
+        sets = item.get("sets") or []
+        if not isinstance(sets, list) or not sets:
+            sets = [{"set_number": 1, "reps": item.get("target_reps"), "weight": item.get("target_weight"), "duration_seconds": item.get("target_duration_seconds")}]
+        for set_idx, s in enumerate(sets, start=1):
+            execute(
+                "INSERT INTO sets (workout_exercise_id, set_number, set_type, weight, reps, duration_seconds, rpe, is_completed, notes, logged_at, distance_miles, calories) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    cur_we.lastrowid,
+                    s.get("set_number") or set_idx,
+                    s.get("set_type") or "normal",
+                    s.get("weight"),
+                    s.get("reps"),
+                    s.get("duration_seconds"),
+                    s.get("rpe"),
+                    int(bool(s.get("is_completed", False))),
+                    s.get("notes"),
+                    created,
+                    s.get("distance_miles"),
+                    s.get("calories"),
+                ),
+            )
+
+    return jsonify({"workout": build_workout_payload(user["id"], workout_id)})
+
+
+@app.route("/api/workouts/<int:workout_id>", methods=["PATCH"])
+@login_required
+def api_workout_update(workout_id):
+    user = current_user()
+    get_workout(workout_id, user["id"])
+    payload = request.get_json(force=True, silent=False) or {}
+    fields = []
+    args = []
+    if "name" in payload:
+        fields.append("name = ?")
+        args.append(payload.get("name"))
+    if "notes" in payload:
+        fields.append("notes = ?")
+        args.append(payload.get("notes"))
+    if "status" in payload:
+        fields.append("status = ?")
+        args.append(payload.get("status"))
+    if "ended_at" in payload:
+        fields.append("ended_at = ?")
+        args.append(payload.get("ended_at"))
+    if not fields:
+        return jsonify({"error": "no mutable fields provided"}), 400
+    fields.append("updated_at = ?")
+    args.append(now_iso())
+    args.append(workout_id)
+    execute(f"UPDATE workouts SET {', '.join(fields)} WHERE id = ?", tuple(args))
+    return jsonify({"workout": build_workout_payload(user["id"], workout_id)})
+
+
+@app.route("/api/workouts/<int:workout_id>/finish", methods=["POST"])
+@login_required
+def api_workout_finish(workout_id):
+    user = current_user()
+    get_workout(workout_id, user["id"])
+    payload = request.get_json(force=True, silent=False) or {}
+    ended_at = payload.get("ended_at") or now_iso()
+    execute(
+        "UPDATE workouts SET status = 'completed', ended_at = ?, updated_at = ? WHERE id = ?",
+        (ended_at, now_iso(), workout_id),
+    )
+    return jsonify({"workout": build_workout_payload(user["id"], workout_id)})
+
+
+@app.route("/api/workouts/<int:workout_id>/exercises", methods=["POST"])
+@login_required
+def api_workout_add_exercise(workout_id):
+    user = current_user()
+    get_workout(workout_id, user["id"])
+    payload = request.get_json(force=True, silent=False) or {}
+    ex_name = (payload.get("name") or "").strip()
+    if not ex_name:
+        return jsonify({"error": "exercise name is required"}), 400
+    tracking_mode = payload.get("tracking_mode") or "strength"
+    ex_id = ensure_exercise(user["id"], ex_name, tracking_mode=tracking_mode)
+    row = query_one("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_order FROM workout_exercises WHERE workout_id = ?", (workout_id,))
+    cur = execute(
+        "INSERT INTO workout_exercises (workout_id, exercise_id, sort_order, exercise_name_snapshot, notes, rest_seconds) VALUES (?,?,?,?,?,?)",
+        (workout_id, ex_id, payload.get("sort_order") or row["next_order"], ex_name, payload.get("notes"), payload.get("rest_seconds")),
+    )
+    replace_sets_for_workout_exercise(cur.lastrowid, payload.get("sets") or [], logged_at=now_iso())
+    return jsonify({"workout": build_workout_payload(user["id"], workout_id)})
+
+
+@app.route("/api/workouts/<int:workout_id>/exercises/<int:workout_exercise_id>", methods=["PATCH"])
+@login_required
+def api_workout_update_exercise(workout_id, workout_exercise_id):
+    user = current_user()
+    get_workout(workout_id, user["id"])
+    existing = query_one("SELECT * FROM workout_exercises WHERE id = ? AND workout_id = ?", (workout_exercise_id, workout_id))
+    if not existing:
+        return jsonify({"error": "workout exercise not found"}), 404
+    payload = request.get_json(force=True, silent=False) or {}
+
+    fields = []
+    args = []
+    if "name" in payload:
+        ex_name = (payload.get("name") or "").strip()
+        if not ex_name:
+            return jsonify({"error": "name cannot be blank"}), 400
+        tracking_mode = payload.get("tracking_mode") or "strength"
+        ex_id = ensure_exercise(user["id"], ex_name, tracking_mode=tracking_mode)
+        fields.extend(["exercise_id = ?", "exercise_name_snapshot = ?"])
+        args.extend([ex_id, ex_name])
+    if "notes" in payload:
+        fields.append("notes = ?")
+        args.append(payload.get("notes"))
+    if "rest_seconds" in payload:
+        fields.append("rest_seconds = ?")
+        args.append(payload.get("rest_seconds"))
+    if "sort_order" in payload:
+        fields.append("sort_order = ?")
+        args.append(payload.get("sort_order"))
+    if fields:
+        args.append(workout_exercise_id)
+        execute(f"UPDATE workout_exercises SET {', '.join(fields)} WHERE id = ?", tuple(args))
+    if "sets" in payload:
+        replace_sets_for_workout_exercise(workout_exercise_id, payload.get("sets") or [], logged_at=now_iso())
+    return jsonify({"workout": build_workout_payload(user["id"], workout_id)})
+
+
+@app.route("/api/workouts/<int:workout_id>/exercises/<int:workout_exercise_id>", methods=["DELETE"])
+@login_required
+def api_workout_delete_exercise(workout_id, workout_exercise_id):
+    user = current_user()
+    get_workout(workout_id, user["id"])
+    existing = query_one("SELECT * FROM workout_exercises WHERE id = ? AND workout_id = ?", (workout_exercise_id, workout_id))
+    if not existing:
+        return jsonify({"error": "workout exercise not found"}), 404
+    execute("DELETE FROM sets WHERE workout_exercise_id = ?", (workout_exercise_id,))
+    execute("DELETE FROM workout_exercises WHERE id = ?", (workout_exercise_id,))
+    return jsonify({"workout": build_workout_payload(user["id"], workout_id)})
+
+
+@app.route("/api/workouts/<int:workout_id>/exercises/<int:workout_exercise_id>/sets/<int:set_id>", methods=["PATCH"])
+@login_required
+def api_workout_update_set(workout_id, workout_exercise_id, set_id):
+    user = current_user()
+    get_workout(workout_id, user["id"])
+    existing = query_one("SELECT * FROM workout_exercises WHERE id = ? AND workout_id = ?", (workout_exercise_id, workout_id))
+    if not existing:
+        return jsonify({"error": "workout exercise not found"}), 404
+    set_row = query_one("SELECT * FROM sets WHERE id = ? AND workout_exercise_id = ?", (set_id, workout_exercise_id))
+    if not set_row:
+        return jsonify({"error": "set not found"}), 404
+
+    payload = request.get_json(force=True, silent=False) or {}
+    mutable = {
+        "set_number": payload.get("set_number") if "set_number" in payload else set_row["set_number"],
+        "set_type": payload.get("set_type") if "set_type" in payload else set_row["set_type"],
+        "weight": payload.get("weight") if "weight" in payload else set_row["weight"],
+        "reps": payload.get("reps") if "reps" in payload else set_row["reps"],
+        "duration_seconds": payload.get("duration_seconds") if "duration_seconds" in payload else set_row["duration_seconds"],
+        "rpe": payload.get("rpe") if "rpe" in payload else set_row["rpe"],
+        "is_completed": int(bool(payload.get("is_completed"))) if "is_completed" in payload else set_row["is_completed"],
+        "notes": payload.get("notes") if "notes" in payload else set_row["notes"],
+        "distance_miles": payload.get("distance_miles") if "distance_miles" in payload else set_row["distance_miles"],
+        "calories": payload.get("calories") if "calories" in payload else set_row["calories"],
+    }
+    execute(
+        "UPDATE sets SET set_number=?, set_type=?, weight=?, reps=?, duration_seconds=?, rpe=?, is_completed=?, notes=?, logged_at=?, distance_miles=?, calories=? WHERE id=?",
+        (
+            mutable["set_number"], mutable["set_type"], mutable["weight"], mutable["reps"], mutable["duration_seconds"],
+            mutable["rpe"], mutable["is_completed"], mutable["notes"], now_iso(), mutable["distance_miles"], mutable["calories"], set_id,
+        ),
+    )
+    return jsonify({"workout": build_workout_payload(user["id"], workout_id)})
 
 
 if __name__ == "__main__":

@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+{% block title %}Ops Dashboard{% endblock %}
+{% block content %}
+<h1>Ops Dashboard</h1>
+<p class="muted">Quick visibility into the systems Claw relies on. Updated at {{ snapshot.generated_at_local }}.</p>
+
+<div class="grid two compact">
+  {% for card in snapshot.status_cards %}
+  <section class="card status-card">
+    <div class="status-head">
+      <h3>{{ card.name }}</h3>
+      <span class="status-pill status-{{ card.level|lower }}">{{ card.level }}</span>
+    </div>
+    <p class="status-value">{{ card.summary }}</p>
+    {% if card.detail %}<p class="muted">{{ card.detail }}</p>{% endif %}
+  </section>
+  {% endfor %}
+</div>
+
+<div class="grid two">
+  <section class="card">
+    <h2>Workout cadence · last 14 days</h2>
+    <div class="sparkbars">
+      {% for item in snapshot.workouts.completed_14d %}
+      <div class="sparkbar-row">
+        <div class="sparkbar-label">{{ item.label }}</div>
+        <div class="sparkbar-track"><div class="sparkbar-fill" style="width: {{ item.percent }}%"></div></div>
+        <div class="sparkbar-value">{{ item.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="toolbar muted small-gap">
+      <span>Completed 30d: {{ snapshot.workouts.completed_30d }}</span>
+      <span>•</span>
+      <span>In progress: {{ snapshot.workouts.in_progress }}</span>
+      <span>•</span>
+      <span>Last completed: {{ snapshot.workouts.last_completed_label }}</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Location visits · last 14 days</h2>
+    <div class="sparkbars">
+      {% for item in snapshot.location.visits_14d %}
+      <div class="sparkbar-row">
+        <div class="sparkbar-label">{{ item.label }}</div>
+        <div class="sparkbar-track"><div class="sparkbar-fill alt" style="width: {{ item.percent }}%"></div></div>
+        <div class="sparkbar-value">{{ item.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="toolbar muted small-gap">
+      <span>Last event: {{ snapshot.location.last_event_label }}</span>
+      <span>•</span>
+      <span>30d total: {{ snapshot.location.events_30d }}</span>
+    </div>
+  </section>
+</div>
+
+<div class="grid two">
+  <section class="card">
+    <h2>Cron jobs</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Job</th>
+            <th>Status</th>
+            <th>Next run</th>
+            <th>Last result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in snapshot.cron.jobs %}
+          <tr>
+            <td>
+              <strong>{{ job.name }}</strong><br>
+              <span class="muted">{{ job.schedule }}</span>
+            </td>
+            <td><span class="status-pill status-{{ job.level|lower }}">{{ job.level }}</span></td>
+            <td>{{ job.next_run_label }}</td>
+            <td>{{ job.last_result }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">Scheduler success rate: {{ snapshot.cron.scheduler_success_rate }} · task-level success rate: {{ snapshot.cron.task_success_rate }}</p>
+  </section>
+
+  <section class="card">
+    <h2>Recent signals</h2>
+    <ul class="clean-list">
+      {% for item in snapshot.recent_signals %}
+      <li>
+        <strong>{{ item.title }}</strong>
+        <div class="muted">{{ item.detail }}</div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+
+<div class="grid two">
+  <section class="card">
+    <h2>Top location targets · 30 days</h2>
+    <ul class="clean-list">
+      {% for item in snapshot.location.top_zones %}
+      <li><strong>{{ item.name }}</strong><span class="muted"> · {{ item.count }} visits/events</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Workout mix · 30 days</h2>
+    <ul class="clean-list">
+      {% for item in snapshot.workouts.top_types %}
+      <li><strong>{{ item.name }}</strong><span class="muted"> · {{ item.count }} completed</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

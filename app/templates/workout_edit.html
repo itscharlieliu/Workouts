@@ -76,24 +76,24 @@
     <div class="table-wrap">
     <table>
       <tr>
-        <th class="sticky-set">#</th><th>Type</th>
+        <th class="sticky-set">#</th>
         {% if block.exercise_meta and block.exercise_meta['tracking_mode'] == 'cardio' %}
-          <th>Duration (s)</th><th>Distance (mi)</th><th>Calories</th><th>RPE</th><th class="sticky-done">Done</th>
+          <th>Type</th><th>Duration (s)</th><th>Distance (mi)</th><th>Calories</th><th>RPE</th><th class="sticky-done">Done</th>
         {% else %}
-          <th>Weight</th><th>Reps</th><th>RPE</th><th class="sticky-done">Done</th>
+          <th>Weight</th><th>Reps</th><th>Type</th><th>RPE</th><th class="sticky-done">Done</th>
         {% endif %}
       </tr>
       {% for s in block.sets %}
       <tr>
         <td class="sticky-set">{{ s['set_number'] }}<input type="hidden" name="set_id" value="{{ s['id'] }}"></td>
-        <td>
-          <select name="set_type_{{ s['id'] }}">
-            {% for opt in ['warmup','normal','drop','failure','cardio'] %}
-              <option value="{{ opt }}" {% if s['set_type']==opt %}selected{% endif %}>{{ opt }}</option>
-            {% endfor %}
-          </select>
-        </td>
         {% if block.exercise_meta and block.exercise_meta['tracking_mode'] == 'cardio' %}
+          <td>
+            <select name="set_type_{{ s['id'] }}">
+              {% for opt in ['warmup','normal','drop','failure','cardio'] %}
+                <option value="{{ opt }}" {% if s['set_type']==opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </td>
           <td><input name="duration_{{ s['id'] }}" type="number" value="{{ '' if s['duration_seconds'] is none else s['duration_seconds'] }}"></td>
           <td><input name="distance_{{ s['id'] }}" type="number" step="0.01" value="{{ '' if s['distance_miles'] is none else s['distance_miles'] }}"></td>
           <td><input name="calories_{{ s['id'] }}" type="number" value="{{ '' if s['calories'] is none else s['calories'] }}"></td>
@@ -102,6 +102,13 @@
         {% else %}
           <td><input name="weight_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['weight'] is none else s['weight'] }}"></td>
           <td><input name="reps_{{ s['id'] }}" type="number" value="{{ '' if s['reps'] is none else s['reps'] }}"></td>
+          <td>
+            <select name="set_type_{{ s['id'] }}">
+              {% for opt in ['warmup','normal','drop','failure','cardio'] %}
+                <option value="{{ opt }}" {% if s['set_type']==opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </td>
           <td><input name="rpe_{{ s['id'] }}" type="number" step="0.1" value="{{ '' if s['rpe'] is none else s['rpe'] }}"></td>
           <td class="sticky-done"><input name="done_{{ s['id'] }}" type="checkbox" {% if s['is_completed'] %}checked{% endif %}></td>
         {% endif %}
@@ -123,4 +130,13 @@
 {% else %}
 <p class="muted">No exercises yet. Add one above.</p>
 {% endfor %}
+
+<section class="card">
+  <h2>Finish Workout</h2>
+  <form method="post" action="{{ url_for('finish_workout', workout_id=workout['id']) }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input name="notes" placeholder="Workout notes">
+    <button type="submit">Finish Workout</button>
+  </form>
+</section>
 {% endblock %}

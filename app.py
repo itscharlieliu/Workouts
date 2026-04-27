@@ -1454,6 +1454,93 @@ def api_plan():
     })
 
 
+@app.route("/api/plan", methods=["PATCH"])
+@login_required
+def api_plan_update():
+    user = current_user()
+    payload = request.get_json(force=True, silent=False) or {}
+    plan = get_training_plan(user["id"])
+
+    if "plan" in payload:
+        plan = payload["plan"]
+    else:
+        week_num = payload.get("week")
+        focus = payload.get("focus")
+        targets = payload.get("targets") or {}
+        if week_num is None:
+            return jsonify({"error": "provide full plan or week"}), 400
+        matched = False
+        for week in plan.get("weeks") or []:
+            if week.get("week") == week_num:
+                matched = True
+                if focus is not None:
+                    week["focus"] = focus
+                if targets:
+                    week.setdefault("targets", {}).update(targets)
+                break
+        if not matched:
+            return jsonify({"error": f"week not found: {week_num}"}), 404
+
+    set_setting(user["id"], "active_training_plan", plan)
+    current_week = get_plan_week(plan)
+    return jsonify({"plan": plan, "current_week": current_week})
+
+
+@app.route("/api/templates")
+@login_required
+def api_templates():
+    user = current_user()
+    templates = query_all("SELECT * FROM workout_templates WHERE user_id = ? AND is_archived = 0 ORDER BY name", (user["id"],))
+    items = []
+    for tpl in templates:
+        exercises = query_all(
+            "SELECT wte.*, e.name AS exercise_name FROM workout_template_exercises wte JOIN exercises e ON e.id = wte.exercise_id WHERE wte.template_id = ? ORDER BY wte.sort_order, wte.id",
+            (tpl["id"],),
+        )
+        items.append({
+            "id": tpl["id"],
+            "name": tpl["name"],
+            "notes": tpl["notes"],
+            "exercises": [
+                {
+                    "id": ex["id"],
+                    "exercise_id": ex["exercise_id"],
+                    "name": ex["exercise_name"],
+                    "sort_order": ex["sort_order"],
+                    "target_sets": ex["target_sets"],
+                    "target_reps_min": ex["target_reps_min"],
+                    "target_reps_max": ex["target_reps_max"],
+                    "rest_seconds": ex["rest_seconds"],
+                }
+                for ex in exercises
+            ],
+        })
+    return jsonify({"templates": items})
+
+
+@app.route("/api/workouts")
+@login_required
+def api_workouts_list():
+    user = current_user()
+    limit = max(1, min(int(request.args.get("limit", 20)), 100))
+    name = (request.args.get("name") or "").strip()
+    status = (request.args.get("status") or "").strip()
+    clauses = ["user_id = ?"]
+    args = [user["id"]]
+    if name:
+        clauses.append("lower(name) = lower(?)")
+        args.append(name)
+    if status:
+        clauses.append("status = ?")
+        args.append(status)
+    args.append(limit)
+    rows = query_all(
+        f"SELECT * FROM workouts WHERE {' AND '.join(clauses)} ORDER BY datetime(started_at) DESC LIMIT ?",
+        tuple(args),
+    )
+    return jsonify({"workouts": [build_workout_payload(user["id"], row["id"]) for row in rows]})
+
+
 def replace_sets_for_workout_exercise(workout_exercise_id, sets_payload, logged_at=None):
     logged_at = logged_at or now_iso()
     execute("DELETE FROM sets WHERE workout_exercise_id = ?", (workout_exercise_id,))
@@ -1488,6 +1575,11 @@ def api_workouts_start():
 
     existing = get_active_workout(user["id"])
     if existing and not payload.get("allow_parallel"):
+        if payload.get("return_existing", True):
+            return jsonify({
+                "workout": build_workout_payload(user["id"], existing["id"]),
+                "already_active": True,
+            })
         return jsonify({
             "error": "active workout already exists",
             "workout": build_workout_payload(user["id"], existing["id"]),

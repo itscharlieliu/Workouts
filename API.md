@@ -25,10 +25,23 @@ Supported auth headers:
 ### Workout creation
 - `POST /api/workouts/start`
 
+Auth required:
+- `Authorization: Bearer <token>` or `X-Workout-Token: <token>`
+
 Use one of:
 - `template_id`
 - `template_name`
 - custom `exercises` array
+
+Recommended client behavior for "start today's workout":
+1. `GET /api/workouts/active`
+2. if one exists, use it
+3. otherwise `POST /api/workouts/start` with `template_name`
+4. then patch exercise targets to the current plan
+
+Idempotent start behavior:
+- by default, if an active workout already exists and `allow_parallel` is not true, the API returns `200` with the existing workout and `already_active: true`
+- set `return_existing=false` if you explicitly want the older `409` conflict behavior
 
 ### Workout metadata update
 - `PATCH /api/workouts/<id>`
@@ -78,6 +91,8 @@ Set patch fields:
 
 ## Notes
 
-- `POST /api/workouts/start` returns `409` if an active workout exists unless `allow_parallel` is true.
+- `POST /api/workouts/start` is idempotent by default: if an active workout exists and `allow_parallel` is not true, it returns the active workout with `already_active: true`.
+- Set `return_existing=false` to force the older `409` conflict behavior.
+- `POST /api/workouts/start` still supports parallel sessions when `allow_parallel` is true.
 - These endpoints are the preferred automation surface for Claw.
 - Avoid direct DB edits unless the API is missing a required operation and has been explicitly validated as insufficient.
